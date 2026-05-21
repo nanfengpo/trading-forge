@@ -1411,9 +1411,10 @@ def build_commentary(sector: Dict[str, Any],
 def _data_source_label() -> str:
     """One-line description of which vendors are wired up."""
     parts = []
+    if _finnhub_key():  parts.append("finnhub")
+    if _HAS_YF:         parts.append("yfinance")
     if _av_key():       parts.append("alpha_vantage")
     if _polygon_key():  parts.append("polygon")
-    if _finnhub_key():  parts.append("finnhub")
     return "+".join(parts) if parts else "no_api_key"
 
 
