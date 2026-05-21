@@ -1607,3 +1607,190 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   .adjust-row { flex-direction: column; gap: 2px; }
 }
 
+/* ============================================================
+ *  基本面看板 (Fundamentals Dashboard) — multi-sector composite
+ *  scoring with sector-specific weights.
+ * ============================================================ */
+.fund-page { display: flex; flex-direction: column; gap: 14px; }
+.fund-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; flex-wrap: wrap;
+}
+
+/* Sub-tab strip — one chip per sector */
+.fund-subtabs {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding: 6px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.fund-subtab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  background: transparent; border: 1px solid transparent;
+  color: var(--text-soft); font-size: 14px; font-weight: 500;
+  transition: all 0.15s ease;
+}
+.fund-subtab:hover { background: var(--bg-card); color: var(--text); }
+.fund-subtab.active {
+  background: var(--accent); color: var(--tab-active-text, #fff);
+  border-color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+.fund-subtab-icon { font-size: 15px; }
+.fund-subtab-count { color: var(--text-muted); font-size: 12px; font-weight: normal; }
+.fund-subtab.active .fund-subtab-count { color: rgba(255,255,255,0.85); }
+
+/* Sector context: description + weight bars */
+.fund-context {
+  display: grid; grid-template-columns: 1fr 320px; gap: 16px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px 18px;
+}
+@media (max-width: 900px) { .fund-context { grid-template-columns: 1fr; } }
+.fund-context-title { font-size: 18px; font-weight: 600; color: var(--text); }
+.fund-weight-rationale {
+  margin-top: 6px; padding: 8px 12px;
+  background: var(--bg-soft); border-left: 3px solid var(--accent-3);
+  border-radius: 6px; font-size: 13px; color: var(--text-soft);
+}
+.fund-weights {
+  background: var(--bg-soft); border-radius: 8px; padding: 12px 14px;
+  border: 1px solid var(--border);
+}
+.fund-weights-title {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+}
+.fund-weight-list { display: flex; flex-direction: column; gap: 6px; }
+.fund-weight-row {
+  display: grid; grid-template-columns: 75px 1fr 40px; gap: 8px;
+  align-items: center; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.fund-weight-label { color: var(--text-soft); }
+.fund-weight-bar-wrap {
+  height: 8px; background: var(--bg-card);
+  border-radius: 4px; overflow: hidden; border: 1px solid var(--border);
+}
+.fund-weight-bar {
+  height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-3));
+  transition: width 0.3s ease;
+}
+.fund-weight-val { text-align: right; font-weight: 600; color: var(--text); }
+
+/* KPI strip */
+.fund-kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.fund-kpi {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px;
+}
+.fund-kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.fund-kpi-value { font-size: 24px; font-weight: 700; margin-top: 4px; color: var(--text); }
+.fund-kpi.kpi-good .fund-kpi-value { color: var(--success); }
+.fund-kpi.kpi-mid  .fund-kpi-value { color: var(--accent-3); }
+.fund-kpi.kpi-high .fund-kpi-value { color: var(--danger); }
+
+/* Top / bottom picks */
+.fund-picks {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+@media (max-width: 900px) { .fund-picks { grid-template-columns: 1fr; } }
+.fund-pick-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.fund-pick-section h3 { margin: 0 0 12px; font-size: 15px; color: var(--text); border-bottom: none; padding: 0; }
+.picks-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+.fund-pick {
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; background: var(--bg);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.fund-pick:hover { transform: translateY(-2px); box-shadow: 0 3px 10px rgba(0,0,0,0.06); }
+.fund-pick-good { border-color: rgba(45,107,62,0.4); background: rgba(45,107,62,0.06); }
+.fund-pick-high { border-color: rgba(168,50,50,0.4); background: rgba(168,50,50,0.05); }
+[data-theme="dark"] .fund-pick-good { background: rgba(102,187,106,0.10); border-color: rgba(102,187,106,0.35); }
+[data-theme="dark"] .fund-pick-high { background: rgba(229,115,115,0.10); border-color: rgba(229,115,115,0.35); }
+.fund-pick-rank {
+  font-size: 11px; color: var(--text-muted); font-weight: 600;
+  letter-spacing: 0.4px; margin-bottom: 2px;
+}
+.fund-pick-ticker { font-size: 19px; font-weight: 700; color: var(--accent); letter-spacing: 0.3px; }
+.fund-pick-good .fund-pick-ticker { color: var(--success); }
+.fund-pick-high .fund-pick-ticker { color: var(--danger); }
+.fund-pick-name { font-size: 12px; color: var(--text-muted); min-height: 18px; margin-bottom: 8px; }
+.fund-pick-score-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.fund-pick-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.fund-pick-score { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.fund-pick-metrics {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px;
+  font-variant-numeric: tabular-nums;
+}
+.fund-pick-metric { display: flex; justify-content: space-between; font-size: 12px; }
+.fund-pick-metric-label { color: var(--text-muted); }
+.fund-pick-metric-val { color: var(--text); font-weight: 600; }
+
+/* Score classes — shared across pills and rows */
+.fund-score-good { color: var(--success); }
+.fund-score-mid  { color: var(--accent-3); }
+.fund-score-high { color: var(--danger); }
+.fund-score-na   { color: var(--text-muted); }
+.fund-score-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 12px;
+  font-weight: 700; font-variant-numeric: tabular-nums;
+  border: 1px solid currentColor; min-width: 50px; text-align: center;
+}
+.fund-score-pill.fund-score-good { background: rgba(45,107,62,0.10); }
+.fund-score-pill.fund-score-mid  { background: rgba(184,134,11,0.10); }
+.fund-score-pill.fund-score-high { background: rgba(168,50,50,0.10); }
+[data-theme="dark"] .fund-score-pill.fund-score-good { background: rgba(102,187,106,0.15); }
+[data-theme="dark"] .fund-score-pill.fund-score-mid  { background: rgba(212,166,74,0.15); }
+[data-theme="dark"] .fund-score-pill.fund-score-high { background: rgba(229,115,115,0.15); }
+
+/* Scoring table */
+.fund-table-toolbar { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.fund-table-toolbar input, .fund-table-toolbar select {
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-card); color: var(--text); font-size: 13px;
+}
+.fund-table-toolbar input { flex: 1; min-width: 200px; }
+.fund-table-wrap {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden;
+}
+#fund-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#fund-table th, #fund-table td {
+  padding: 9px 10px; text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+#fund-table th {
+  background: var(--bg-soft); font-weight: 600; color: var(--text-muted);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
+  cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1;
+}
+#fund-table th:hover { color: var(--accent); }
+#fund-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.fund-cell-rank { color: var(--text-muted); font-weight: 600; width: 40px; }
+.fund-cell-ticker { font-weight: 700; color: var(--accent); letter-spacing: 0.3px; }
+.fund-cell-name { color: var(--text-soft); max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.fund-row-good { background: rgba(45,107,62,0.04); }
+.fund-row-high { background: rgba(168,50,50,0.04); }
+[data-theme="dark"] .fund-row-good { background: rgba(102,187,106,0.05); }
+[data-theme="dark"] .fund-row-high { background: rgba(229,115,115,0.05); }
+.fund-row td.pct { font-weight: 500; }
+
+.fund-footer {
+  margin-top: 12px; padding: 14px 18px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; font-size: 12px; color: var(--text-muted);
+}
+.fund-footer p { margin: 6px 0; }
+.fund-footer code {
+  background: var(--bg-soft); padding: 1px 5px; border-radius: 3px;
+  font-size: 11px;
+}
+

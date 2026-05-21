@@ -39,6 +39,7 @@
     <button class="active" data-tab="home">首页</button>
     <button data-tab="watchlist">⭐ 自选</button>
     <button data-tab="decisions" id="tab-btn-decisions">🎯 决策<span class="nav-badge" id="decisions-nav-badge" style="display:none;"></span></button>
+    <button data-tab="fundamentals">📊 基本面</button>
     <button data-tab="opportunities">⚡ 24h 机会<span class="nav-badge" id="opps-nav-badge" style="display:none;"></span></button>
     <button data-tab="library">策略库</button>
     <button data-tab="favorites">⭐ 收藏</button>
@@ -455,6 +456,104 @@
 </section>
 
 <!-- ========================================================== -->
+<!--  FUNDAMENTALS DASHBOARD (基本面看板)                          -->
+<!--  Unified scoring across sectors. Each sub-tab has its own    -->
+<!--  ticker universe and per-metric weight matrix; composite     -->
+<!--  score is a sector-relative percentile blend.                -->
+<!-- ========================================================== -->
+<section class="tab-content" id="fundamentals">
+  <div class="fund-page">
+    <header class="fund-head">
+      <div>
+        <h2 style="margin:0;">📊 基本面看板</h2>
+        <p class="muted" style="margin:4px 0 0; font-size:13px;">
+          按板块的多维基本面打分（PE · Fwd PE · PEG-AV · PEG-Fwd · 营收 YoY · 利润 YoY），
+          权重按板块调整 — 不同行业看重的指标不一样，分数也因此不同。
+        </p>
+      </div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <span class="muted" style="font-size:12px;" id="fund-updated"></span>
+        <button class="btn secondary small" id="fund-refresh">↻ 刷新</button>
+      </div>
+    </header>
+
+    <!-- Sub-tab strip: one chip per sector. Populated by JS so adding
+         a sector in fundamentals.py automatically shows up here. -->
+    <div class="fund-subtabs" id="fund-subtabs">
+      <div class="muted" style="padding:8px; font-size:13px;">加载板块列表…</div>
+    </div>
+
+    <!-- Sector context: description + weight rationale + weight bars -->
+    <div class="fund-context" id="fund-context"></div>
+
+    <!-- KPI strip: total tickers / median score / good / mid / high -->
+    <div class="fund-kpis" id="fund-kpis"></div>
+
+    <!-- Two pick grids side by side -->
+    <div class="fund-picks">
+      <section class="fund-pick-section">
+        <h3>👍 综合评分 Top 5 <span class="muted" style="font-weight:normal;">— 当前板块最具吸引力</span></h3>
+        <div class="picks-grid" id="fund-top-picks"></div>
+      </section>
+      <section class="fund-pick-section">
+        <h3>👎 综合评分 Bottom 5 <span class="muted" style="font-weight:normal;">— 同板块对照参考</span></h3>
+        <div class="picks-grid" id="fund-bottom-picks"></div>
+      </section>
+    </div>
+
+    <!-- Full scored table -->
+    <section>
+      <h3>全量评分表（点击表头排序）</h3>
+      <div class="fund-table-toolbar">
+        <input id="fund-search" placeholder="🔍 搜索代码 / 公司名 / 行业…" />
+        <select id="fund-class-filter">
+          <option value="">全部分级</option>
+          <option value="good">优秀（≥70）</option>
+          <option value="mid">中性（45-70）</option>
+          <option value="high">弱势（&lt;45）</option>
+          <option value="na">数据缺失</option>
+        </select>
+      </div>
+      <div class="fund-table-wrap">
+        <table id="fund-table">
+          <thead>
+            <tr>
+              <th data-sort="rank" data-type="num">#</th>
+              <th data-sort="ticker" data-type="text">代码</th>
+              <th data-sort="name" data-type="text">公司</th>
+              <th data-sort="score" data-type="num" class="sort-desc">综合分 ▼</th>
+              <th data-sort="pe" data-type="num">PE</th>
+              <th data-sort="pe_fwd" data-type="num">Fwd PE</th>
+              <th data-sort="peg_av" data-type="num">PEG (AV)</th>
+              <th data-sort="peg_fwd" data-type="num">PEG (Fwd)</th>
+              <th data-sort="rev_growth" data-type="num">营收 YoY</th>
+              <th data-sort="eps_growth" data-type="num">利润 YoY</th>
+              <th data-sort="market_cap" data-type="num">市值</th>
+            </tr>
+          </thead>
+          <tbody id="fund-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="fund-footer">
+      <p>
+        <strong>打分方法</strong>：每个指标先在板块内做<strong>百分位排名</strong>（0–1），再映射到 0–100：
+        <em>"越低越好"</em>的指标（PE / PEG）用 <code>(1−百分位)×100</code>；
+        <em>"越高越好"</em>的指标（营收/利润同比）用 <code>百分位×100</code>。
+        然后按板块权重加权求和，得到 0–100 的综合分。
+        若某只股票缺失某指标，该指标的权重自动重新分摊给其他指标，<strong>不会因缺数据而被错杀</strong>。
+        负 PE / 负 PEG 的指标分直接判 0（即亏损公司在该项不给加分）。
+      </p>
+      <p class="muted">
+        数据源：Alpha Vantage <code>OVERVIEW</code>（每只股票一次 REST 调用，30 分钟 TTL 缓存）。
+        本看板仅供研究参考，不构成投资建议。
+      </p>
+    </footer>
+  </div>
+</section>
+
+<!-- ========================================================== -->
 <!--  24h OPPORTUNITIES                                          -->
 <!-- ========================================================== -->
 <section class="tab-content" id="opportunities">
@@ -744,5 +843,7 @@
 <script src="/auth.js"></script>
 <script src="/strategies.js"></script>
 <script src="/app.js?v=20260522c"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/fundamentals.js?v=20260522c"></script>
 </body>
 </html>

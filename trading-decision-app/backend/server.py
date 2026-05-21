@@ -332,6 +332,31 @@ async def quotes(tickers: str = "") -> JSONResponse:
     return JSONResponse({"items": fetch_quotes(items)})
 
 
+# ---- fundamentals dashboard (基本面看板) -------------------------------
+
+@app.get("/api/fundamentals")
+async def fundamentals_index() -> JSONResponse:
+    """Sector index for the 基本面看板 sub-tabs (id/name/icon/desc + count)."""
+    from fundamentals import list_sectors
+    return JSONResponse(list_sectors())
+
+
+@app.get("/api/fundamentals/{sector_id}")
+async def fundamentals_sector(sector_id: str) -> JSONResponse:
+    """Full payload for one sector: scored rows, KPIs, top/bottom picks.
+
+    Fetches Alpha Vantage OVERVIEW for every ticker (30-min TTL cache),
+    then computes a sector-relative percentile composite score using the
+    sector-specific weight matrix.
+    """
+    from fundamentals import build_sector_payload, SECTORS
+    if sector_id not in SECTORS:
+        return JSONResponse({"error": f"unknown sector: {sector_id}"}, status_code=404)
+    # Offload the blocking IO so we don't tie up the event loop.
+    payload = await asyncio.to_thread(build_sector_payload, sector_id)
+    return JSONResponse(payload)
+
+
 # ---- dataflows diagnostics (used by Profile page) -----------------------
 
 @app.get("/api/dataflows")
@@ -519,6 +544,9 @@ if STATIC_DIR.exists():
     @app.get("/app.js")
     async def app_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "app.js", media_type="application/javascript")
+    @app.get("/fundamentals.js")
+    async def fundamentals_js() -> FileResponse:
+        return FileResponse(STATIC_DIR / "fundamentals.js", media_type="application/javascript")
     @app.get("/auth.js")
     async def auth_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "auth.js", media_type="application/javascript")
