@@ -19,13 +19,25 @@ so a stock with sparse data isn't penalised just for missing fields.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+
+# yfinance is the 4th vendor in the fallback chain. Imported defensively
+# so local dev (and any env where yfinance isn't installed) still works —
+# the fetcher returns None and the chain falls through to the other vendors.
+try:
+    import yfinance as _yf   # type: ignore
+    _HAS_YF = True
+except Exception:
+    _yf = None
+    _HAS_YF = False
 
 logger = logging.getLogger(__name__)
 
@@ -336,26 +348,86 @@ METRIC_GROUPS = {
 #                                  cross-checks; falls back when AV
 #                                  Quarterly YoY is missing.
 #
-# Lightweight in-process TTL cache (independent of dataflows.cache so we
-# don't accidentally evict TradingAgents lookups). Keyed by ticker.
+# ─── Cache hierarchy ─────────────────────────────────────────────────
+#
+# Fundamentals are daily-changing (10-K filings drop quarterly; ratios drift
+# slowly between earnings) so we cache aggressively. Three layers:
+#
+#   1. _FUND_CACHE — in-memory per-ticker row, 12h TTL.
+#   2. Disk JSON  — same shape, persisted under _DISK_CACHE_DIR so a server
+#                    restart doesn't dump a hot cache. 24h TTL.
+#   3. _PAYLOAD_CACHE — fully-scored sector payload, 10min TTL (cheaper
+#                       than re-scoring the same 28 rows).
+#
+# Per-ticker fetch fans out to 4 vendors in parallel and merges with
+# explicit per-metric fallback (Finnhub primary, yfinance secondary, AV
+# for PEG-AV only, Polygon for live price). Negative cache marks fully-
+# unfetchable tickers (e.g. delisted) so we don't re-hammer.
 _FUND_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-_FUND_TTL_SEC = 30 * 60   # 30 min
+_FUND_TTL_SEC = 12 * 3600   # 12h — fundamentals change quarterly, ratios drift slowly
 
-# Negative cache — when a vendor returns no data for a ticker, remember it
-# for a short period so we don't re-pound the vendor on every refresh.
 _NEG_CACHE: Dict[str, float] = {}   # ticker → expiry epoch
-_NEG_TTL_SEC = 10 * 60    # 10 min
+_NEG_TTL_SEC = 30 * 60    # 30 min back-off on full-fail tickers
 
-# Sector-payload cache — the *scored* payload (rows + commentary + stats).
-# Cheap O(1) re-read; saves the ~50ms scoring + commentary cost on every
-# subsequent fetch within the TTL.
 _PAYLOAD_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-_PAYLOAD_TTL_SEC = 5 * 60   # 5 min
+_PAYLOAD_TTL_SEC = 10 * 60   # 10 min — re-score within window is wasted work
+
+# Disk cache location — defaults to ~/.fund-cache but FUND_CACHE_DIR env
+# var lets the deployer point at e.g. /data on Fly.
+_DISK_CACHE_DIR = Path(os.environ.get("FUND_CACHE_DIR") or
+                       (Path.home() / ".fund-cache"))
+_DISK_TTL_SEC = 24 * 3600   # 24h
+try:
+    _DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+except Exception as _e:
+    logger.warning("could not create fund cache dir %s: %s", _DISK_CACHE_DIR, _e)
+
 
 _AV_BASE = "https://www.alphavantage.co/query"
 _POLY_BASE = "https://api.polygon.io"
 _FH_BASE = "https://finnhub.io/api/v1"
 _CG_BASE = "https://api.coingecko.com/api/v3"
+
+
+def _disk_cache_path(ticker: str) -> Path:
+    # Use uppercase + replace dots / dashes so filenames are safe.
+    safe = ticker.upper().replace("/", "_").replace("\\", "_")
+    return _DISK_CACHE_DIR / f"{safe}.json"
+
+
+def _disk_cache_read(ticker: str) -> Optional[Dict[str, Any]]:
+    """Return cached row if disk entry exists and is within TTL, else None."""
+    p = _disk_cache_path(ticker)
+    if not p.exists():
+        return None
+    try:
+        with p.open("r") as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            return None
+        ts = d.get("_cached_at")
+        if not ts or (time.time() - float(ts)) > _DISK_TTL_SEC:
+            return None
+        # Strip cache-only fields when returning to caller
+        out = {k: v for k, v in d.items() if k != "_cached_at"}
+        return out
+    except Exception as e:
+        logger.debug("disk cache read %s failed: %s", ticker, e)
+        return None
+
+
+def _disk_cache_write(ticker: str, row: Dict[str, Any]) -> None:
+    """Persist a fetched row to disk for cross-restart survival."""
+    if not row or row.get("_no_data"):
+        return
+    p = _disk_cache_path(ticker)
+    try:
+        payload = dict(row)
+        payload["_cached_at"] = time.time()
+        with p.open("w") as f:
+            json.dump(payload, f, default=str)
+    except Exception as e:
+        logger.debug("disk cache write %s failed: %s", ticker, e)
 
 
 def _env(*names: str) -> Optional[str]:
@@ -483,42 +555,138 @@ def _fetch_finnhub_metrics(ticker: str) -> Optional[Dict[str, Any]]:
             # Both in $millions → FCF / MCap × 100 = yield %
             fcf_yield = round(fcf / mcap * 100, 2)
 
+        # Note on Finnhub naming (verified against a live JPM /metric dump):
+        # - ROIC: only `roiTTM` / `roiAnnual` exist (NOT `roicTTM`). Treat
+        #   roi as roic proxy — for non-leveraged firms it's equivalent.
+        # - D/E: lives at `totalDebt/totalEquityQuarterly` (literal slash
+        #   in the key). Python dict access tolerates that fine.
+        # - Interest coverage: `netInterestCoverageAnnual` / `...TTM`. For
+        #   banks this isn't meaningful but the field still appears.
+        # - EV/EBITDA: `evEbitdaTTM` is the canonical key (other variants
+        #   in older docs).
         return {
             # Valuation
-            "fh_pe":            _safe_float(m.get("peTTM") or m.get("peExclExtraTTM")),
-            "fh_pe_fwd":        _safe_float(m.get("peForward") or m.get("forwardPE")),
+            "fh_pe":            _safe_float(m.get("peTTM") or m.get("peExclExtraTTM")
+                                            or m.get("peBasicExclExtraTTM") or m.get("peAnnual")),
+            "fh_pe_fwd":        _safe_float(m.get("forwardPE")),
+            "fh_peg_fwd":       _safe_float(m.get("forwardPEG") or m.get("pegTTM")),
             "fh_ps":            _safe_float(m.get("psTTM") or m.get("psAnnual")),
-            "fh_pb":            _safe_float(m.get("pbAnnual") or m.get("pbQuarterly")),
-            "fh_ev_ebitda":     _safe_float(m.get("currentEv/freeCashFlowTTM") or
-                                            m.get("currentEv/EbitdaTTM") or
-                                            m.get("evEbitdaTTM")),
+            "fh_pb":            _safe_float(m.get("pbQuarterly") or m.get("pbAnnual")
+                                            or m.get("pb")),
+            "fh_ev_ebitda":     _safe_float(m.get("evEbitdaTTM") or m.get("currentEv/EbitdaTTM")),
             # Profitability
-            "fh_eps":           _safe_float(m.get("epsTTM") or m.get("epsAnnual")),
-            "fh_roe":           _safe_float(m.get("roeTTM") or m.get("roeRfy")),
-            "fh_roic":          _safe_float(m.get("roicTTM") or m.get("roiTTM")),
-            "fh_gross_margin":  _safe_float(m.get("grossMarginTTM")),
-            "fh_op_margin":     _safe_float(m.get("operatingMarginTTM")),
+            "fh_eps":           _safe_float(m.get("epsBasicExclExtraItemsTTM")
+                                            or m.get("epsTTM") or m.get("epsAnnual")),
+            "fh_roe":           _safe_float(m.get("roeTTM") or m.get("roeRfy") or m.get("roe5Y")),
+            "fh_roic":          _safe_float(m.get("roiTTM") or m.get("roiAnnual") or m.get("roi5Y")),
+            "fh_gross_margin":  _safe_float(m.get("grossMarginTTM") or m.get("grossMarginAnnual")
+                                            or m.get("grossMargin5Y")),
+            "fh_op_margin":     _safe_float(m.get("operatingMarginTTM") or m.get("operatingMarginAnnual")
+                                            or m.get("operatingMargin5Y")),
             # Growth
-            "fh_rev_growth":    _safe_float(m.get("revenueGrowthTTMYoy")),
-            "fh_eps_growth":    _safe_float(m.get("epsGrowthTTMYoy")),
+            "fh_rev_growth":    _safe_float(m.get("revenueGrowthTTMYoy") or
+                                            m.get("revenueGrowthQuarterlyYoy")),
+            "fh_eps_growth":    _safe_float(m.get("epsGrowthTTMYoy") or
+                                            m.get("epsGrowthQuarterlyYoy")),
             "fh_eps_growth_5y": _safe_float(m.get("epsGrowth5Y")),
             # Cash flow
             "fh_fcf_yield":     fcf_yield,
             # Leverage / Liquidity
-            "fh_de":            _safe_float(m.get("totalDebt/totalEquityAnnual") or
-                                            m.get("totalDebt/totalEquityQuarterly")),
+            "fh_de":            _safe_float(m.get("totalDebt/totalEquityQuarterly")
+                                            or m.get("totalDebt/totalEquityAnnual")
+                                            or m.get("longTermDebt/equityQuarterly")
+                                            or m.get("longTermDebt/equityAnnual")),
             "fh_interest_cov":  _safe_float(m.get("netInterestCoverageTTM") or
                                             m.get("netInterestCoverageAnnual")),
-            "fh_current_ratio": _safe_float(m.get("currentRatioAnnual") or
-                                            m.get("currentRatioQuarterly")),
+            "fh_current_ratio": _safe_float(m.get("currentRatioQuarterly") or
+                                            m.get("currentRatioAnnual")),
             # Shareholder
-            "fh_div_yield":     _safe_float(m.get("dividendYieldIndicatedAnnual")),
+            "fh_div_yield":     _safe_float(m.get("currentDividendYieldTTM")
+                                            or m.get("dividendYieldIndicatedAnnual")),
             # Risk
             "fh_beta":          _safe_float(m.get("beta")),
         }
     except Exception as e:
         logger.debug("finnhub metric %s: %s", ticker, e)
         return None
+
+
+# ───────────────────────── yfinance fallback ──────────────────────────
+
+def _fetch_yfinance_metrics(ticker: str) -> Optional[Dict[str, Any]]:
+    """yfinance.Ticker(t).info — broadest free coverage; backfills the
+    metrics Finnhub / AV miss. Slower per-ticker (~1-2s) so we only call
+    it as a fallback — but for banks / biotechs it's often the ONLY
+    source for D/E, current ratio, FCF, share-count, etc.
+
+    Returns None if yfinance isn't installed or the call fails.
+    """
+    if not _HAS_YF:
+        return None
+    try:
+        t = _yf.Ticker(ticker)
+        info = t.info or {}
+    except Exception as e:
+        logger.debug("yfinance info %s: %s", ticker, e)
+        return None
+    if not info:
+        return None
+
+    # yfinance percentages are usually returned as decimals (0.23 = 23%);
+    # ratios (PE, P/B, P/S, etc.) are native. Normalise to % when relevant.
+    def _pct(v: Any) -> Optional[float]:
+        f = _safe_float(v)
+        return f * 100 if f is not None else None
+
+    fcf = _safe_float(info.get("freeCashflow"))
+    mcap = _safe_float(info.get("marketCap"))
+    fcf_yield = None
+    if fcf is not None and mcap is not None and mcap > 0:
+        fcf_yield = round(fcf / mcap * 100, 2)
+
+    # Buyback yield: derive from share count change YoY when both fields
+    # are present. yfinance exposes `sharesOutstanding` (current) and
+    # `floatShares`; the historical share count comes from `t.shares`
+    # (slow) so we skip the derivation when it would require extra calls.
+    buyback_yield = None
+    # Lightweight derivation: prefer info field if present (rare).
+    if info.get("buybackYield") is not None:
+        buyback_yield = _pct(info.get("buybackYield"))
+
+    return {
+        "yf_pe":            _safe_float(info.get("trailingPE")),
+        "yf_pe_fwd":        _safe_float(info.get("forwardPE")),
+        "yf_ps":            _safe_float(info.get("priceToSalesTrailing12Months")),
+        "yf_pb":            _safe_float(info.get("priceToBook")),
+        "yf_ev_ebitda":     _safe_float(info.get("enterpriseToEbitda")),
+        "yf_eps":           _safe_float(info.get("trailingEps")),
+        "yf_roe":           _pct(info.get("returnOnEquity")),
+        # yfinance has no direct ROIC; use ROA as a conservative proxy
+        # (banks / biotechs ROIC is messy anyway). Better than nothing.
+        "yf_roic":          _pct(info.get("returnOnAssets")),
+        "yf_gross_margin":  _pct(info.get("grossMargins")),
+        "yf_op_margin":     _pct(info.get("operatingMargins")),
+        "yf_rev_growth":    _pct(info.get("revenueGrowth")),
+        "yf_eps_growth":    _pct(info.get("earningsGrowth") or info.get("earningsQuarterlyGrowth")),
+        "yf_fcf_yield":     fcf_yield,
+        # debtToEquity arrives as % (e.g. 88.3 means D/E = 0.883) — yfinance
+        # quirk. We divide by 100 to get the ratio form everyone uses.
+        "yf_de":            (lambda d: d / 100 if isinstance(d, (int, float)) else None)(
+                                _safe_float(info.get("debtToEquity"))),
+        "yf_current_ratio": _safe_float(info.get("currentRatio")),
+        "yf_quick_ratio":   _safe_float(info.get("quickRatio")),
+        # dividendYield arrives as decimal — convert to %
+        "yf_div_yield":     _pct(info.get("dividendYield")),
+        "yf_buyback_yield": buyback_yield,
+        "yf_beta":          _safe_float(info.get("beta")),
+        # Display-only
+        "yf_name":          info.get("shortName") or info.get("longName"),
+        "yf_sector":        info.get("sector"),
+        "yf_industry":      info.get("industry"),
+        "yf_market_cap":    mcap,
+        "yf_analyst_target":_safe_float(info.get("targetMeanPrice") or
+                                        info.get("targetMedianPrice")),
+    }
 
 
 # ─────────────────────── CoinGecko (crypto sector) ────────────────────
@@ -619,90 +787,153 @@ def _pick_first(*vals):
 
 def _normalise_row(ticker: str, ov: Optional[Dict[str, Any]],
                    poly: Optional[Dict[str, Any]] = None,
-                   fh: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Merge AV OVERVIEW + Polygon + Finnhub → 20-metric row.
+                   fh: Optional[Dict[str, Any]] = None,
+                   yf: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Merge AV + Polygon + Finnhub + yfinance → 20-metric row.
 
-    Source preference:
-      * Fundamentals: Finnhub (richer + fewer rate-limit issues) > AV
-      * PEG-AV: only AV provides this — falls back to None
-      * Live price: Polygon > AV > None
+    Per-metric fallback order (first non-None wins):
+      * Most metrics: Finnhub → yfinance → AV
+      * PEG-AV: only AV (historical 5y PEG)
+      * Live price: Polygon → AV-derived → None
+      * Source-of-truth for each metric is recorded in `_sources` for QA.
     """
     ov = ov or {}
     fh = fh or {}
+    yf = yf or {}
     poly = poly or {}
 
+    # Track which vendor supplied each metric — exposed in `_sources` for
+    # diagnostics (the frontend can surface this if we ever want to).
+    src: Dict[str, str] = {}
+
+    def _layer(metric_name: str, *layers):
+        """Pick first non-None across layers, remember which source provided it.
+        Each layer is a (source_label, value) tuple OR a bare value.
+        """
+        for L in layers:
+            if isinstance(L, tuple):
+                lab, v = L
+            else:
+                lab, v = "?", L
+            if v is not None:
+                src[metric_name] = lab
+                return v
+        return None
+
+    # AV percent conversion helper — AV returns most ratios as decimals.
+    def _av_pct(v):
+        f = _safe_float(v)
+        return f * 100 if f is not None else None
+
     # ── Valuation ────────────────────────────
-    pe       = _pick_first(fh.get("fh_pe"),     _safe_float(ov.get("PERatio")))
-    pe_fwd   = _pick_first(fh.get("fh_pe_fwd"), _safe_float(ov.get("ForwardPE")))
-    peg_av   = _safe_float(ov.get("PEGRatio"))  # AV only
-    ps       = _pick_first(fh.get("fh_ps"),     _safe_float(ov.get("PriceToSalesRatioTTM")))
-    pb       = _pick_first(fh.get("fh_pb"),     _safe_float(ov.get("PriceToBookRatio")))
-    ev_ebitda = _pick_first(fh.get("fh_ev_ebitda"), _safe_float(ov.get("EVToEBITDA")))
+    pe = _layer("pe",
+                ("fh", fh.get("fh_pe")),
+                ("yf", yf.get("yf_pe")),
+                ("av", _safe_float(ov.get("PERatio"))))
+    pe_fwd = _layer("pe_fwd",
+                    ("fh", fh.get("fh_pe_fwd")),
+                    ("yf", yf.get("yf_pe_fwd")),
+                    ("av", _safe_float(ov.get("ForwardPE"))))
+    peg_av = _layer("peg_av",
+                    ("av", _safe_float(ov.get("PEGRatio"))))   # only AV has 5y PEG
+    ps = _layer("ps",
+                ("fh", fh.get("fh_ps")),
+                ("yf", yf.get("yf_ps")),
+                ("av", _safe_float(ov.get("PriceToSalesRatioTTM"))))
+    pb = _layer("pb",
+                ("fh", fh.get("fh_pb")),
+                ("yf", yf.get("yf_pb")),
+                ("av", _safe_float(ov.get("PriceToBookRatio"))))
+    ev_ebitda = _layer("ev_ebitda",
+                       ("fh", fh.get("fh_ev_ebitda")),
+                       ("yf", yf.get("yf_ev_ebitda")),
+                       ("av", _safe_float(ov.get("EVToEBITDA"))))
 
     # ── Profitability ────────────────────────
-    eps = _pick_first(fh.get("fh_eps"), _safe_float(ov.get("EPS")))
-    # AV returns ROE / margins as decimals (0.234 = 23.4%); Finnhub returns
-    # them as raw % values already. Normalise: prefer Finnhub (already %).
-    roe = fh.get("fh_roe")
-    if roe is None:
-        av_roe = _safe_float(ov.get("ReturnOnEquityTTM"))
-        roe = av_roe * 100 if av_roe is not None else None
-    roic = fh.get("fh_roic")  # Finnhub returns %
-    gross_margin = fh.get("fh_gross_margin")
-    if gross_margin is None:
-        # AV doesn't expose gross margin directly but has GrossProfitTTM + Revenue
-        gp = _safe_float(ov.get("GrossProfitTTM"))
-        rev = _safe_float(ov.get("RevenueTTM"))
-        if gp and rev and rev > 0:
-            gross_margin = round(gp / rev * 100, 2)
-    op_margin = fh.get("fh_op_margin")
-    if op_margin is None:
-        av_om = _safe_float(ov.get("OperatingMarginTTM"))
-        op_margin = av_om * 100 if av_om is not None else None
+    eps = _layer("eps",
+                 ("fh", fh.get("fh_eps")),
+                 ("yf", yf.get("yf_eps")),
+                 ("av", _safe_float(ov.get("EPS"))))
+    roe = _layer("roe",
+                 ("fh", fh.get("fh_roe")),
+                 ("yf", yf.get("yf_roe")),
+                 ("av", _av_pct(ov.get("ReturnOnEquityTTM"))))
+    roic = _layer("roic",
+                  ("fh", fh.get("fh_roic")),
+                  ("yf", yf.get("yf_roic")))
+    # AV has GrossProfit + Revenue — compute gross margin if neither
+    # Finnhub nor yfinance had it.
+    gm_av = None
+    gp = _safe_float(ov.get("GrossProfitTTM"))
+    rev = _safe_float(ov.get("RevenueTTM"))
+    if gp and rev and rev > 0:
+        gm_av = round(gp / rev * 100, 2)
+    gross_margin = _layer("gross_margin",
+                          ("fh", fh.get("fh_gross_margin")),
+                          ("yf", yf.get("yf_gross_margin")),
+                          ("av", gm_av))
+    op_margin = _layer("op_margin",
+                       ("fh", fh.get("fh_op_margin")),
+                       ("yf", yf.get("yf_op_margin")),
+                       ("av", _av_pct(ov.get("OperatingMarginTTM"))))
 
     # ── Growth ───────────────────────────────
-    rev_g = fh.get("fh_rev_growth")
-    if rev_g is None:
-        av_rg = _safe_float(ov.get("QuarterlyRevenueGrowthYOY"))
-        rev_g = av_rg * 100 if av_rg is not None else None
-    eps_g = fh.get("fh_eps_growth")
-    if eps_g is None:
-        av_eg = _safe_float(ov.get("QuarterlyEarningsGrowthYOY"))
-        eps_g = av_eg * 100 if av_eg is not None else None
+    rev_g = _layer("rev_growth",
+                   ("fh", fh.get("fh_rev_growth")),
+                   ("yf", yf.get("yf_rev_growth")),
+                   ("av", _av_pct(ov.get("QuarterlyRevenueGrowthYOY"))))
+    eps_g = _layer("eps_growth",
+                   ("fh", fh.get("fh_eps_growth")),
+                   ("yf", yf.get("yf_eps_growth")),
+                   ("av", _av_pct(ov.get("QuarterlyEarningsGrowthYOY"))))
 
     # Forward PEG = Fwd PE / EPS YoY %. Only meaningful when growth > 0.
+    # Prefer Finnhub's published forwardPEG when it disagrees with our
+    # derivation (catches edge cases where EPS growth = positive but
+    # Finnhub uses 3y/5y avg).
     peg_fwd = None
-    if pe_fwd is not None and eps_g is not None and eps_g > 0:
+    if fh.get("fh_peg_fwd") is not None:
+        peg_fwd = fh.get("fh_peg_fwd")
+        src["peg_fwd"] = "fh"
+    elif pe_fwd is not None and eps_g is not None and eps_g > 0:
         peg_fwd = round(pe_fwd / eps_g, 2)
+        src["peg_fwd"] = "derived"
 
     # ── Cash Flow ────────────────────────────
-    fcf_yield = fh.get("fh_fcf_yield")
-    # AV: GrossProfitTTM doesn't include FCF; we leave it None if Finnhub
-    # didn't give us one.
+    fcf_yield = _layer("fcf_yield",
+                       ("fh", fh.get("fh_fcf_yield")),
+                       ("yf", yf.get("yf_fcf_yield")))
 
     # ── Leverage / Liquidity ─────────────────
-    de = fh.get("fh_de")
-    interest_cov = fh.get("fh_interest_cov")
-    current_ratio = fh.get("fh_current_ratio")
+    de = _layer("de",
+                ("fh", fh.get("fh_de")),
+                ("yf", yf.get("yf_de")))
+    interest_cov = _layer("interest_cov",
+                          ("fh", fh.get("fh_interest_cov")))
+    current_ratio = _layer("current_ratio",
+                           ("fh", fh.get("fh_current_ratio")),
+                           ("yf", yf.get("yf_current_ratio")))
 
     # ── Shareholder ──────────────────────────
-    div_yield = fh.get("fh_div_yield")
-    if div_yield is None:
-        av_dy = _safe_float(ov.get("DividendYield"))
-        div_yield = av_dy * 100 if av_dy is not None else None
-    # Buyback yield: AV doesn't expose; would need a separate calc.
-    # Leave None — its weight redistributes to other shareholder metrics.
-    buyback_yield = None
+    div_yield = _layer("div_yield",
+                       ("fh", fh.get("fh_div_yield")),
+                       ("yf", yf.get("yf_div_yield")),
+                       ("av", _av_pct(ov.get("DividendYield"))))
+    buyback_yield = _layer("buyback_yield",
+                           ("yf", yf.get("yf_buyback_yield")))
 
     # ── Risk ─────────────────────────────────
-    beta = _pick_first(fh.get("fh_beta"), _safe_float(ov.get("Beta")))
+    beta = _layer("beta",
+                  ("fh", fh.get("fh_beta")),
+                  ("yf", yf.get("yf_beta")),
+                  ("av", _safe_float(ov.get("Beta"))))
 
     # Sanity-check: did we get anything at all?
-    has_any = any(v is not None for v in (
-        pe, pe_fwd, peg_av, ps, pb, ev_ebitda, eps, roe, roic,
-        gross_margin, op_margin, rev_g, eps_g, fcf_yield, de,
-        interest_cov, current_ratio, div_yield, beta,
-    ))
+    metric_vals = (pe, pe_fwd, peg_av, peg_fwd, ps, pb, ev_ebitda, eps,
+                   roe, roic, gross_margin, op_margin, rev_g, eps_g,
+                   fcf_yield, de, interest_cov, current_ratio,
+                   div_yield, buyback_yield, beta)
+    has_any = any(v is not None for v in metric_vals)
     if not has_any and not poly:
         return {
             "ticker": ticker, "name": ticker, "sector": None,
@@ -710,17 +941,26 @@ def _normalise_row(ticker: str, ov: Optional[Dict[str, Any]],
             "price": None, "change_pct": None,
         }
 
-    name = (ov.get("Name") or "")[:40] or ticker
+    # Name: prefer yfinance (cleaner), AV, then ticker.
+    name = (yf.get("yf_name") or ov.get("Name") or "")[:40] or ticker
+    sector_label = yf.get("yf_sector") or ov.get("Sector")
+    industry_label = yf.get("yf_industry") or ov.get("Industry")
+    market_cap = _layer("market_cap",
+                        ("yf", yf.get("yf_market_cap")),
+                        ("av", _safe_float(ov.get("MarketCapitalization"))))
+    analyst_target = _layer("analyst_target",
+                            ("yf", yf.get("yf_analyst_target")),
+                            ("av", _safe_float(ov.get("AnalystTargetPrice"))))
 
     return {
         "ticker": ticker,
         "name": name,
-        "sector": ov.get("Sector") or None,
-        "industry": ov.get("Industry") or None,
+        "sector": sector_label,
+        "industry": industry_label,
         # Live price layer (Polygon)
         "price": poly.get("price"),
         "change_pct": poly.get("change_pct"),
-        # 20-metric set ──
+        # 21-metric set ──
         "pe": pe, "pe_fwd": pe_fwd, "peg_av": peg_av, "peg_fwd": peg_fwd,
         "ps": ps, "pb": pb, "ev_ebitda": ev_ebitda,
         "eps": eps, "roe": roe, "roic": roic,
@@ -731,29 +971,36 @@ def _normalise_row(ticker: str, ov: Optional[Dict[str, Any]],
         "div_yield": div_yield, "buyback_yield": buyback_yield,
         "beta": beta,
         # Misc display
-        "market_cap": _pick_first(_safe_float(ov.get("MarketCapitalization")),
-                                  None),
-        "analyst_target": _safe_float(ov.get("AnalystTargetPrice")),
+        "market_cap": market_cap,
+        "analyst_target": analyst_target,
         "as_of": ov.get("LatestQuarter"),
+        # Diagnostics — which source filled each metric
+        "_sources": src,
     }
 
 
 def _fetch_one(ticker: str, force: bool = False) -> Dict[str, Any]:
-    """Cached single-ticker fetch — runs AV + Polygon + Finnhub in parallel.
+    """Cached single-ticker fetch — runs AV + Polygon + Finnhub + yfinance
+    in parallel and merges with explicit per-metric fallback chain.
 
-    `force=True` bypasses _FUND_CACHE so a manual refresh always pulls
-    live data. Negative cache short-circuits repeated "no data" lookups
-    so dead tickers (delisted, AV-incompatible foreign symbols, etc.)
-    don't slow the page down.
+    Cache layers checked in order: in-memory → disk (24h) → vendors.
+    `force=True` bypasses both memory and disk caches so a manual refresh
+    always pulls live data.
     """
     t_up = ticker.upper()
     now = time.time()
 
     if not force:
+        # 1. In-memory cache (12h TTL)
         cached = _FUND_CACHE.get(t_up)
         if cached and (now - cached[0]) < _FUND_TTL_SEC:
             return cached[1]
-        # Negative cache hit → return a placeholder, don't refetch.
+        # 2. Disk cache (24h TTL) — survives restarts
+        disk_row = _disk_cache_read(ticker)
+        if disk_row is not None and not disk_row.get("_no_data"):
+            _FUND_CACHE[t_up] = (now, disk_row)
+            return disk_row
+        # 3. Negative cache — recent failure → placeholder, skip vendors
         neg = _NEG_CACHE.get(t_up)
         if neg and neg > now:
             return {
@@ -762,23 +1009,27 @@ def _fetch_one(ticker: str, force: bool = False) -> Dict[str, Any]:
                 "price": None, "change_pct": None,
             }
 
-    # Three vendors in parallel — fastest path to live data.
-    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="fund-vendor") as pool:
+    # Four vendors in parallel. yfinance is slower (~1-2s) but pulls the
+    # metrics the others miss; running it concurrently keeps total wall
+    # time at max(vendor_latency), not sum.
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="fund-vendor") as pool:
         f_ov   = pool.submit(_fetch_av_overview, ticker)
         f_poly = pool.submit(_fetch_polygon_quote, ticker)
         f_fh   = pool.submit(_fetch_finnhub_metrics, ticker)
-        ov = f_ov.result()
+        f_yf   = pool.submit(_fetch_yfinance_metrics, ticker)
+        ov   = f_ov.result()
         poly = f_poly.result()
-        fh = f_fh.result()
+        fh   = f_fh.result()
+        yf   = f_yf.result()
 
-    row = _normalise_row(ticker, ov, poly, fh)
+    row = _normalise_row(ticker, ov, poly, fh, yf)
     if row.get("_no_data"):
-        # Remember the failure so we don't keep pounding vendors.
         _NEG_CACHE[t_up] = now + _NEG_TTL_SEC
         return row
 
-    # Cache when we got fundamentals from any vendor.
+    # Persist to in-memory + disk caches.
     _FUND_CACHE[t_up] = (now, row)
+    _disk_cache_write(ticker, row)
     return row
 
 
@@ -813,7 +1064,10 @@ def fetch_sector_rows(sector_id: str, force: bool = False) -> List[Dict[str, Any
         return row
 
     rows: List[Dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=16, thread_name_prefix="fund") as pool:
+    # 24 workers — yfinance dominates the latency budget (1-2s per ticker)
+    # so more parallelism is the main lever. Disk + memory caches absorb
+    # the load on subsequent fetches.
+    with ThreadPoolExecutor(max_workers=24, thread_name_prefix="fund") as pool:
         for r in pool.map(_wrapped, tickers):
             rows.append(r)
     return rows

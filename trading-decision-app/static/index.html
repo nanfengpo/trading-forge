@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TradingForge · 智策 · 多智能体投研工作台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/styles.css?v=20260524b">
+<link rel="stylesheet" href="/styles.css?v=20260525a">
 </head>
 <body>
 
@@ -672,11 +672,15 @@
             不会因为缺数据而被错杀。负 PE / 负 PEG → 该项直接判 0（亏损公司在该项不给加分）。</p>
         </div>
         <div class="fund2-foot-col">
-          <div class="fund2-foot-head">数据源</div>
-          <p>三源并行：<code>Alpha Vantage OVERVIEW</code>（基本面）+
-            <code>Polygon.io</code>（现价 + 日涨跌）+
-            <code>Finnhub /stock/metric</code>（增速口径互补）。
-            30 分钟 TTL 缓存；点击 <strong>↻ 刷新全部</strong> 可强制绕过缓存。
+          <div class="fund2-foot-head">数据源 · 四级降级链</div>
+          <p>每只股票并行调 4 个 vendor：
+            <code>Finnhub /stock/metric</code>（首选，单次调用拿 20 个指标）→
+            <code>yfinance.info</code>（兜底，覆盖银行 / 生物医疗等 Finnhub 缺数据的标的）→
+            <code>Alpha Vantage OVERVIEW</code>（补 PEG-AV 等专属字段）+
+            <code>Polygon.io</code>（现价 + 日涨跌）。
+            加密板块走 <code>CoinGecko</code>。
+            12h 内存缓存 + 24h 磁盘缓存（重启不丢）+ 30min 失败回退；
+            点 <strong>↻ 刷新全部</strong> 可强制绕过。
             <strong>仅供研究，不构成投资建议</strong>。</p>
         </div>
       </div>
@@ -977,6 +981,6 @@
 <script src="/strategies.js"></script>
 <script src="/app.js?v=20260524b"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/fundamentals.js?v=20260524b"></script>
+<script src="/fundamentals.js?v=20260525a"></script>
 </body>
 </html>

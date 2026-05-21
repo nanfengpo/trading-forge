@@ -6,6 +6,13 @@ python-dotenv>=1.0
 # --- HTTP client (dataflows: finnhub_pro / polygon_io / alpha_vantage / fmp) ---
 requests>=2.31
 
+# --- yfinance — 4th vendor in `fundamentals.py` fallback chain. Covers the
+# metrics Finnhub free / Alpha Vantage drop (FCF, D/E, current ratio, ROIC,
+# share count, etc.) — critical for banks and biotechs that other vendors
+# miss. Also declared by TradingAgents' pyproject; listed here explicitly so
+# the backend image always has it.
+yfinance>=0.2.63
+
 # --- translation layer (uses OpenAI-compatible API for any of:
 #     OpenAI / DeepSeek / Qwen / GLM / Kimi / Google Gemini) ---
 openai>=1.40

@@ -2150,65 +2150,207 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   font-size: 12px; min-width: 38px; text-align: right;
 }
 
-/* Expanded sub-score row */
+/* Expanded sub-score row — TILE GRID layout */
 .fund2-row-ex td {
   padding: 0; background: var(--bg-soft);
   border-bottom: 2px solid var(--accent);
 }
-.fund2-row-ex-td { padding: 16px 18px !important; }
-.fund2-ex-grid { display: flex; flex-direction: column; gap: 14px; }
-.fund2-ex-head {
-  font-size: 12px; font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--text);
-  padding-bottom: 6px;
+.fund2-row-ex-td { padding: 18px 20px !important; }
+
+.fund2-bk-panel {
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* Header strip — ticker + name + composite score */
+.fund2-bk-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding-bottom: 10px;
   border-bottom: 1px dashed var(--border);
 }
-.fund2-ex-group {
+.fund2-bk-head-icon { font-size: 16px; }
+.fund2-bk-head-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.fund2-bk-head-ticker {
+  font-size: 18px; font-weight: 800; color: var(--accent);
+  letter-spacing: 0.04em;
+  font-family: Georgia, serif;
+  margin-left: 6px;
+}
+.fund2-bk-head-name { font-size: 13px; }
+.fund2-bk-head-spacer { flex: 1; }
+.fund2-bk-head-score {
+  font-family: Georgia, serif;
+  font-size: 30px; font-weight: 800; line-height: 1;
+  letter-spacing: -0.02em;
+}
+.fund2-bk-head-score-lbl {
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+}
+
+/* Legend strip — colour scale + arrow guide */
+.fund2-bk-legend {
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; font-size: 11px; color: var(--text-soft);
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.fund2-bk-legend-label {
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-muted); margin-right: 2px;
+}
+.fund2-bk-legend-swatch {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 52px; height: 18px; padding: 0 6px;
+  font-size: 10.5px; font-weight: 600; color: #fff;
+  border-radius: 3px;
+  text-shadow: 0 1px 1px rgba(0,0,0,0.25);
+}
+.fund2-bk-legend-spacer {
+  flex: 1; min-width: 8px;
+  border-left: 1px solid var(--border);
+  height: 16px;
+}
+.fund2-bk-legend-arrow {
+  font-weight: 600; color: var(--text);
+}
+.fund2-bk-legend-note { font-size: 10px; }
+
+/* Group grid — 2-up by default, 1-up on narrow viewports */
+.fund2-bk-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 1100px) {
+  .fund2-bk-groups { grid-template-columns: 1fr; }
+}
+.fund2-bk-group {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent-3);
   border-radius: 8px;
   padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
 }
-.fund2-ex-group-h {
-  font-size: 10.5px; font-weight: 700; letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--accent-3);
-  margin-bottom: 10px;
+.fund2-bk-group-head {
+  display: flex; align-items: center; gap: 8px;
 }
-.fund2-ex-bars {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px 18px;
+.fund2-bk-group-name {
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--accent-3);
 }
-@media (max-width: 900px) {
-  .fund2-ex-bars { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fund2-bk-group-weight {
+  font-size: 10.5px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
 }
-@media (max-width: 600px) {
-  .fund2-ex-bars { grid-template-columns: 1fr; }
+.fund2-bk-group-score {
+  margin-left: auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 36px; height: 22px; padding: 0 8px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px; font-weight: 700;
+  border-radius: 11px;
+  border: 1px solid var(--border-strong);
 }
-.fund2-ex-block { display: flex; flex-direction: column; gap: 4px; }
-.fund2-ex-b-label {
-  font-size: 12px; font-weight: 600; color: var(--text);
+
+/* Tile grid inside a group — flex with wrap so weight-based sizing flows */
+.fund2-bk-tiles {
+  display: flex; flex-wrap: wrap; gap: 8px;
 }
-.fund2-ex-b-dir {
-  font-weight: 400; font-size: 10px;
-}
-.fund2-ex-b-track {
-  height: 9px; background: var(--bg-card);
+.fund2-bk-tile {
+  flex: 1 1 90px;
+  min-height: 78px;
+  background: var(--bg-soft);
   border: 1px solid var(--border);
-  border-radius: 4px; overflow: hidden;
+  border-radius: 7px;
+  padding: 7px 9px;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: transform .15s ease, box-shadow .15s ease;
+  position: relative;
 }
-.fund2-ex-b-fill { height: 100%; transition: width .3s ease; }
-.fund2-ex-b-foot {
-  display: flex; justify-content: space-between;
+.fund2-bk-tile:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+  z-index: 1;
+}
+.fund2-bk-tile-sm { flex-basis: 90px;  min-height: 70px; }
+.fund2-bk-tile-md { flex-basis: 130px; min-height: 84px; }
+.fund2-bk-tile-lg { flex-basis: 170px; min-height: 96px; flex-grow: 1.2; }
+
+/* Missing-data tile is dashed + greyed */
+.fund2-bk-tile--na {
+  background: transparent;
+  border-style: dashed;
+  opacity: 0.6;
+}
+.fund2-bk-tile--na .fund2-bk-tile-val { color: var(--text-muted); }
+
+.fund2-bk-tile-top {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px;
+}
+.fund2-bk-tile-arrow {
+  font-weight: 800;
+  color: var(--text);
+  width: 12px; text-align: center; display: inline-block;
+  flex-shrink: 0;
+}
+.fund2-bk-tile-label {
+  flex: 1; min-width: 0;
+  color: var(--text); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fund2-bk-tile-sub {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; height: 18px; padding: 0 5px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10.5px; font-weight: 700;
+  color: #fff;
+  border-radius: 9px;
+  text-shadow: 0 1px 1px rgba(0,0,0,0.3);
+  flex-shrink: 0;
+}
+
+.fund2-bk-tile-val {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 16px; font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  padding: 2px 0;
+}
+.fund2-bk-tile-lg .fund2-bk-tile-val { font-size: 20px; }
+.fund2-bk-tile-sm .fund2-bk-tile-val { font-size: 14px; }
+
+.fund2-bk-tile-foot {
+  font-size: 10px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  text-align: right;
+}
+
+/* Sources strip at bottom */
+.fund2-bk-sources {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+}
+.fund2-bk-src-tag {
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 10.5px;
+  padding: 2px 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-soft);
 }
-.fund2-ex-b-raw { color: var(--text-soft); }
-.fund2-ex-b-sub { font-weight: 700; }
-.fund2-ex-b-w   { font-size: 10px; }
+.fund2-bk-src-sep { color: var(--border-strong); }
 
 /* ─── FOOTER METHODOLOGY ─── */
 .fund2-foot {

@@ -823,6 +823,200 @@
     return fmt2(v);
   }
 
+  // ─────────── EXPANDED ROW (21-metric breakdown) ───────────
+  //
+  // Tile-grid redesign. Each metric is a square tile where:
+  //   - tile SIZE encodes weight (heavy metrics get larger tiles)
+  //   - tile COLOR encodes sub-score via heatmap (red→amber→green)
+  //   - LABEL has direction arrow baked in (↑ / ↓)
+  //   - VALUE shown prominently in centre
+  //   - Sub-score badge top-right, weight badge bottom-right
+  //
+  // Group header shows a weighted-average score for the entire category
+  // so the user can scan groups (estimated 5 secs) before diving in.
+
+  // Returns CSS color string interpolated red→amber→green by sub-score 0-100.
+  function heatColor(sub) {
+    if (!isNum(sub)) return null;
+    const s = Math.max(0, Math.min(100, sub));
+    // Hue: 0 = red, 50 = amber, 70+ = green. Linear interp 0→100 → 0→130 deg.
+    // Tweaked endpoints: <45 red zone (hue 0-40), 45-70 amber (40-70 hue),
+    // ≥70 green (70-130 hue).
+    let hue;
+    if (s < 45)      hue = 0  + (s / 45) * 30;          // 0  → 30   (red → orange)
+    else if (s < 70) hue = 30 + ((s - 45) / 25) * 40;   // 30 → 70   (orange → yellow-green)
+    else             hue = 70 + ((s - 70) / 30) * 50;   // 70 → 120  (yellow-green → green)
+    return `hsl(${Math.round(hue)}, 55%, 38%)`;
+  }
+  function heatTint(sub, alpha) {
+    if (!isNum(sub)) return null;
+    const s = Math.max(0, Math.min(100, sub));
+    let hue;
+    if (s < 45)      hue = 0  + (s / 45) * 30;
+    else if (s < 70) hue = 30 + ((s - 45) / 25) * 40;
+    else             hue = 70 + ((s - 70) / 30) * 50;
+    return `hsla(${Math.round(hue)}, 55%, 45%, ${alpha})`;
+  }
+
+  function buildBreakdownPanel(row, payload) {
+    const meta = payload.metrics_meta || {};
+    const groups = payload.metric_groups || {};
+    const weights = (payload.sector && payload.sector.weights) || {};
+    const subs = row.sub_scores || {};
+    const metricCount = Object.keys(meta).length;
+    const sectorMetricSet = payload.sector && payload.sector.metric_set;
+
+    const panel = el("div", { class: "fund2-bk-panel" });
+
+    // Header — ticker, name, overall score chip
+    panel.appendChild(el("div", { class: "fund2-bk-head" },
+      el("span", { class: "fund2-bk-head-icon" }, "🔬"),
+      el("span", { class: "fund2-bk-head-title" },
+        metricCount + " 维度评分构成"),
+      el("span", { class: "fund2-bk-head-ticker" }, row.ticker || ""),
+      el("span", { class: "fund2-bk-head-name muted" }, (row.name || "")),
+      el("span", { class: "fund2-bk-head-spacer" }),
+      el("span", { class: "fund2-bk-head-score fund2-c-" + (row.score_class || "na") },
+        fmtScore(row.score)),
+      el("span", { class: "fund2-bk-head-score-lbl muted" }, "综合分"),
+    ));
+
+    // Legend (color scale + arrow guide) — orients new users.
+    const legend = el("div", { class: "fund2-bk-legend" });
+    legend.appendChild(el("span", { class: "fund2-bk-legend-label" }, "子分配色"));
+    [
+      { label: "<45 弱", val: 22 },
+      { label: "45-60",  val: 52 },
+      { label: "60-70",  val: 65 },
+      { label: "70-85",  val: 78 },
+      { label: "≥85 强", val: 92 },
+    ].forEach(s => {
+      legend.appendChild(el("span", {
+        class: "fund2-bk-legend-swatch",
+        style: "background:" + heatColor(s.val) + ";",
+      }, s.label));
+    });
+    legend.appendChild(el("span", { class: "fund2-bk-legend-spacer" }));
+    legend.appendChild(el("span", { class: "fund2-bk-legend-label" }, "方向"));
+    legend.appendChild(el("span", { class: "fund2-bk-legend-arrow" }, "↑ 越高越好"));
+    legend.appendChild(el("span", { class: "fund2-bk-legend-arrow" }, "↓ 越低越好"));
+    legend.appendChild(el("span", { class: "fund2-bk-legend-label" }, "瓦片大小"));
+    legend.appendChild(el("span", { class: "fund2-bk-legend-note" }, "= 权重"));
+    panel.appendChild(legend);
+
+    // Group by category
+    const byGroup = {};
+    Object.entries(meta).forEach(([k, cfg]) => {
+      const g = cfg.group || "other";
+      (byGroup[g] = byGroup[g] || []).push(k);
+    });
+
+    const groupGrid = el("div", { class: "fund2-bk-groups" });
+
+    Object.keys(groups).forEach(g => {
+      const metricsInGroup = byGroup[g];
+      if (!metricsInGroup || metricsInGroup.length === 0) return;
+
+      // Total weight in this group → drives whether the group occupies
+      // a "wide" or "narrow" column. Visualises which categories the
+      // sector cares about most.
+      const groupWeight = metricsInGroup.reduce((sum, k) => sum + (weights[k] || 0), 0);
+      // Weighted-average sub-score for the group (skipping missing).
+      let wSum = 0, scoreSum = 0;
+      metricsInGroup.forEach(k => {
+        const s = subs[k];
+        const w = weights[k] || 0;
+        if (isNum(s) && w > 0) {
+          wSum += w; scoreSum += s * w;
+        }
+      });
+      const groupScore = wSum > 0 ? Math.round(scoreSum / wSum) : null;
+
+      const card = el("div", { class: "fund2-bk-group" });
+      // Group header: name + total weight + weighted avg sub-score
+      const header = el("div", { class: "fund2-bk-group-head" });
+      header.appendChild(el("span", { class: "fund2-bk-group-name" }, groups[g]));
+      header.appendChild(el("span", { class: "fund2-bk-group-weight muted" },
+        "板块权重 " + groupWeight + "%"));
+      if (isNum(groupScore)) {
+        const groupCls = classOf(groupScore);
+        const pill = el("span", { class: "fund2-bk-group-score fund2-c-" + groupCls,
+          style: "border-color:" + heatTint(groupScore, 0.7) + ";"
+               + "background:" + heatTint(groupScore, 0.15) + ";" },
+          String(groupScore));
+        header.appendChild(pill);
+      }
+      card.appendChild(header);
+
+      // Tile grid — each metric is a tile sized by weight
+      const tiles = el("div", { class: "fund2-bk-tiles" });
+      metricsInGroup.forEach(k => {
+        const cfg = meta[k];
+        const sub = subs[k];
+        const raw = row[k];
+        const w = weights[k] || 0;
+        const dirArrow = LOWER_BETTER_METRICS.has(k) ? "↓" : "↑";
+        const hasData = isNum(sub) || isNum(raw);
+        // Tile size class: 'lg' (weight ≥ 15), 'md' (≥ 8), 'sm' (else)
+        const sizeCls = w >= 15 ? "lg" : (w >= 8 ? "md" : "sm");
+        const colorCls = "fund2-bk-tile--" + (hasData ? classOf(sub) : "na");
+        const tile = el("div", {
+          class: "fund2-bk-tile " + colorCls + " fund2-bk-tile-" + sizeCls,
+          style: hasData && isNum(sub)
+            ? "background:" + heatTint(sub, 0.18) + ";"
+            + "border-color:" + heatTint(sub, 0.55) + ";"
+            : "",
+        });
+        // Top row: arrow + label + sub-score pill
+        const top = el("div", { class: "fund2-bk-tile-top" });
+        top.appendChild(el("span", {
+          class: "fund2-bk-tile-arrow",
+          title: LOWER_BETTER_METRICS.has(k) ? "越低越好" : "越高越好",
+        }, dirArrow));
+        top.appendChild(el("span", { class: "fund2-bk-tile-label" }, cfg.label || k));
+        if (isNum(sub)) {
+          top.appendChild(el("span", {
+            class: "fund2-bk-tile-sub",
+            style: "background:" + heatColor(sub) + ";",
+          }, String(Math.round(sub))));
+        }
+        tile.appendChild(top);
+        // Centre: raw value (large) or em-dash for missing
+        const valWrap = el("div", { class: "fund2-bk-tile-val" + (hasData ? "" : " na") },
+          hasData ? formatMetricValue(k, raw) : "—");
+        tile.appendChild(valWrap);
+        // Bottom row: weight badge (small)
+        tile.appendChild(el("div", { class: "fund2-bk-tile-foot muted" },
+          w > 0 ? ("权重 " + w + "%") : "未参与评分"));
+        tiles.appendChild(tile);
+      });
+      card.appendChild(tiles);
+
+      groupGrid.appendChild(card);
+    });
+
+    panel.appendChild(groupGrid);
+
+    // Sources strip — diagnostic showing which vendor filled each metric.
+    // Compact, only shows when we have source data.
+    const src = row._sources || {};
+    if (Object.keys(src).length > 0) {
+      const counts = {};
+      Object.values(src).forEach(v => { counts[v] = (counts[v] || 0) + 1; });
+      const labels = { fh: "Finnhub", yf: "yfinance", av: "Alpha Vantage", derived: "derived" };
+      const srcLine = el("div", { class: "fund2-bk-sources muted" });
+      srcLine.appendChild(el("span", null, "数据来源："));
+      Object.entries(counts).forEach(([k, c], idx) => {
+        if (idx > 0) srcLine.appendChild(el("span", { class: "fund2-bk-src-sep" }, "·"));
+        srcLine.appendChild(el("span", { class: "fund2-bk-src-tag" },
+          (labels[k] || k) + " " + c));
+      });
+      panel.appendChild(srcLine);
+    }
+
+    return panel;
+  }
+
   function renderPicks(payload) {
     const top = document.getElementById("fund2-top");
     const bot = document.getElementById("fund2-bot");
@@ -996,59 +1190,7 @@
       if (isExp) {
         const exTr = el("tr", { class: "fund2-row-ex" });
         const exTd = el("td", { class: "fund2-row-ex-td", colspan: "13" });
-        const wrap = el("div", { class: "fund2-ex-grid" });
-        const meta = payload.metrics_meta || {};
-        const groups = payload.metric_groups || {};
-        const weights = (payload.sector && payload.sector.weights) || {};
-        const metricCount = Object.keys(meta).length;
-        wrap.appendChild(el("div", { class: "fund2-ex-head" },
-          "🔬 " + metricCount + " 维度评分构成 · ",
-          el("span", { class: "muted" }, r.ticker || ""),
-        ));
-        // Group metrics by category (Valuation / Profitability / …).
-        const byGroup = {};
-        Object.entries(meta).forEach(([k, cfg]) => {
-          const g = cfg.group || "other";
-          (byGroup[g] = byGroup[g] || []).push(k);
-        });
-        const subs = r.sub_scores || {};
-        Object.keys(groups).forEach(g => {
-          const metricsInGroup = byGroup[g];
-          if (!metricsInGroup || metricsInGroup.length === 0) return;
-          const groupBlock = el("div", { class: "fund2-ex-group" });
-          groupBlock.appendChild(el("div", { class: "fund2-ex-group-h" }, groups[g]));
-          const bars = el("div", { class: "fund2-ex-bars" });
-          metricsInGroup.forEach(k => {
-            const cfg = meta[k];
-            const sub = subs[k];
-            const raw = r[k];
-            const w = weights[k] || 0;
-            const dirArrow = LOWER_BETTER_METRICS.has(k) ? "↓越低越好" : "↑越高越好";
-            const block = el("div", { class: "fund2-ex-block" });
-            block.appendChild(el("div", { class: "fund2-ex-b-label" },
-              cfg.label || k,
-              el("span", { class: "fund2-ex-b-dir muted" }, " · " + dirArrow),
-            ));
-            const track = el("div", { class: "fund2-ex-b-track" });
-            if (isNum(sub)) {
-              track.appendChild(el("div", {
-                class: "fund2-ex-b-fill fund2-c-bg-" + classOf(sub),
-                style: "width:" + Math.max(0, Math.min(100, sub)) + "%;",
-              }));
-            }
-            block.appendChild(track);
-            block.appendChild(el("div", { class: "fund2-ex-b-foot" },
-              el("span", { class: "fund2-ex-b-raw" }, "原值 " + formatMetricValue(k, raw)),
-              el("span", { class: "fund2-ex-b-sub fund2-c-" + classOf(sub) },
-                "子分 " + (isNum(sub) ? Math.round(sub) : "—")),
-              el("span", { class: "fund2-ex-b-w muted" }, "权重 " + w + "%"),
-            ));
-            bars.appendChild(block);
-          });
-          groupBlock.appendChild(bars);
-          wrap.appendChild(groupBlock);
-        });
-        exTd.appendChild(wrap);
+        exTd.appendChild(buildBreakdownPanel(r, payload));
         exTr.appendChild(exTd);
         tbody.appendChild(exTr);
       }
