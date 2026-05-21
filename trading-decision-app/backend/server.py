@@ -495,6 +495,18 @@ async def _startup_scanner() -> None:
         logger.warning("scanner failed to start: %s", e)
 
 
+@app.on_event("startup")
+async def _startup_fundamentals_warmup() -> None:
+    """Background-warm the per-sector payload cache so the first user hit
+    after a cold start is fast. Fire-and-forget — never blocks startup.
+    """
+    try:
+        from fundamentals import warm_up_async
+        warm_up_async()
+    except Exception as e:
+        logger.warning("fundamentals warm-up failed to launch: %s", e)
+
+
 @app.on_event("shutdown")
 async def _shutdown_scanner() -> None:
     try:

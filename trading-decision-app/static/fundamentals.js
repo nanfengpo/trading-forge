@@ -19,16 +19,21 @@
 
   const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.API_BASE_URL) || "";
 
-  // Metric order — used everywhere for consistency.
-  const METRIC_ORDER = ["pe", "pe_fwd", "peg_av", "peg_fwd", "rev_growth", "eps_growth"];
-  const METRIC_LABEL = {
-    pe: "PE", pe_fwd: "Fwd PE", peg_av: "PEG-AV", peg_fwd: "PEG-Fwd",
-    rev_growth: "营收 YoY", eps_growth: "利润 YoY",
-  };
-  const METRIC_DIRECTION = {
-    pe: "lower", pe_fwd: "lower", peg_av: "lower", peg_fwd: "lower",
-    rev_growth: "higher", eps_growth: "higher",
-  };
+  // Metric order in pick-card breakdown bars — the "core 6" for stocks
+  // (the headline fundamentals investors check first).
+  const PICK_METRICS_STOCK = ["pe", "pe_fwd", "peg_fwd", "rev_growth", "eps_growth", "roe"];
+  const PICK_METRICS_CRYPTO = ["market_cap", "vol_to_mcap", "mom_7d", "mom_30d", "ath_dist", "volatility"];
+
+  // For "lower-is-better" vs "higher-is-better" arrow in expanded row.
+  const LOWER_BETTER_METRICS = new Set([
+    "pe", "pe_fwd", "peg_av", "peg_fwd", "ps", "pb", "ev_ebitda",
+    "de", "beta", "volatility",
+  ]);
+  const PCT_METRICS = new Set([
+    "rev_growth", "eps_growth", "roe", "roic", "gross_margin", "op_margin",
+    "fcf_yield", "div_yield", "buyback_yield",
+    "mom_7d", "mom_30d", "ath_dist", "volatility", "vol_to_mcap",
+  ]);
 
   // State
   const cache = {};
@@ -216,16 +221,24 @@
       ));
     }
 
-    // Weight bars (compact horizontal)
+    // Weight bars (compact horizontal) — show only metrics with weight > 0,
+    // sorted by weight desc so the dominant signals are at the top.
     const wWrap = el("div", { class: "fund2-sc-weights" });
     wWrap.appendChild(el("div", { class: "fund2-sc-section-h" }, "指标权重 · METRIC WEIGHTS"));
     const wList = el("div", { class: "fund2-sc-w-list" });
-    METRIC_ORDER.forEach(k => {
-      const w = weights[k] || 0;
+    const meta = payload.metrics_meta || {};
+    const wEntries = Object.entries(weights)
+      .filter(([_, v]) => v > 0)
+      .sort((a, b) => b[1] - a[1]);
+    const maxW = wEntries.length ? wEntries[0][1] : 1;
+    wEntries.forEach(([k, w]) => {
+      const label = (meta[k] && meta[k].label) || k;
       const row = el("div", { class: "fund2-sc-w-row" });
-      row.appendChild(el("span", { class: "fund2-sc-w-label" }, METRIC_LABEL[k]));
+      row.appendChild(el("span", { class: "fund2-sc-w-label" }, label));
       const barTrack = el("div", { class: "fund2-sc-w-track" });
-      const fill = el("div", { class: "fund2-sc-w-fill", style: "width:" + (w * 2) + "%;" });
+      // scale bar by ratio to max weight so the dominant signal is full-bar
+      const fill = el("div", { class: "fund2-sc-w-fill",
+        style: "width:" + (w / maxW * 100) + "%;" });
       barTrack.appendChild(fill);
       row.appendChild(barTrack);
       row.appendChild(el("span", { class: "fund2-sc-w-pct" }, w + "%"));
@@ -486,6 +499,20 @@
   function renderScatterChart(payload) {
     const canvas = document.getElementById("fund2-scatter-canvas");
     if (!canvas || !window.Chart) return;
+
+    const isCrypto = payload.sector && payload.sector.metric_set === "crypto";
+    // Update title/subtitle dynamically so crypto's axes make sense.
+    const titleEl = document.querySelector('.fund2-viz-card:nth-child(2) .fund2-viz-title');
+    const subEl   = document.querySelector('.fund2-viz-card:nth-child(2) .fund2-viz-sub');
+    if (titleEl) titleEl.textContent = isCrypto
+      ? "30d 动量 × 距 ATH 散点图"
+      : "Fwd PE × EPS YoY 散点图";
+    if (subEl) subEl.textContent = isCrypto
+      ? "x = 30d 涨跌 · y = 距 ATH% · 颜色 = 综合分等级"
+      : "x = Fwd PE · y = EPS YoY% · 颜色 = 综合分等级";
+
+    if (isCrypto) return renderCryptoScatter(payload);
+
     const rows = (payload.rows || []).filter(r =>
       isNum(r.pe_fwd) && isNum(r.eps_growth)
     );
@@ -609,8 +636,123 @@
     });
   }
 
+  // ─────────── Crypto scatter (30d mom × ATH dist, dot size = mcap) ───────────
+  function renderCryptoScatter(payload) {
+    const canvas = document.getElementById("fund2-scatter-canvas");
+    if (!canvas || !window.Chart) return;
+    const rows = (payload.rows || []).filter(r =>
+      isNum(r.mom_30d) && isNum(r.ath_dist)
+    );
+
+    const styles = getComputedStyle(document.documentElement);
+    const mutedCol = styles.getPropertyValue("--text-muted").trim() || "#807a72";
+    const borderCol = styles.getPropertyValue("--border").trim() || "#e5dfd0";
+    const goodCol = styles.getPropertyValue("--success").trim() || "#2d6b3e";
+    const midCol  = styles.getPropertyValue("--accent-3").trim() || "#b8860b";
+    const highCol = styles.getPropertyValue("--danger").trim() || "#a83232";
+
+    // Scale dot size by market cap (log scale so BTC doesn't dominate)
+    const maxMcap = Math.max(...rows.map(r => r.market_cap || 1));
+    const dotSize = mcap => {
+      if (!isNum(mcap) || mcap <= 0) return 7;
+      const logRatio = Math.log(mcap) / Math.log(maxMcap);
+      return Math.max(7, Math.min(18, 7 + 11 * logRatio));
+    };
+
+    const ds = (cls, color) => ({
+      label: cls === "good" ? "优秀 ≥70" : cls === "mid" ? "中性 45-70" : "弱势 <45",
+      data: rows
+        .filter(r => r.score_class === cls)
+        .map(r => ({
+          x: r.mom_30d,
+          y: r.ath_dist,
+          ticker: r.ticker, name: r.name,
+          score: r.score, sub_sector: r.sub_sector,
+          mcap: r.market_cap,
+        })),
+      backgroundColor: color + "cc",
+      borderColor: color,
+      borderWidth: 1,
+      pointRadius: function(ctx) { return dotSize(ctx.raw && ctx.raw.mcap); },
+      pointHoverRadius: function(ctx) { return dotSize(ctx.raw && ctx.raw.mcap) + 4; },
+    });
+
+    if (scatterChart) scatterChart.destroy();
+    scatterChart = new Chart(canvas, {
+      type: "scatter",
+      data: { datasets: [ds("good", goodCol), ds("mid", midCol), ds("high", highCol)] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 300 },
+        plugins: {
+          legend: { display: true,
+            labels: { color: mutedCol, font: { size: 11 }, boxWidth: 10 } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const r = ctx.raw;
+                const mcapStr = isNum(r.mcap) ? "$" + (r.mcap / 1e9).toFixed(1) + "B" : "—";
+                return [
+                  `${r.ticker}  ${r.name || ""}`,
+                  `子板块: ${r.sub_sector || "—"}`,
+                  `30d 动量: ${r.x.toFixed(1)}%  ·  距 ATH: ${r.y.toFixed(1)}%`,
+                  `市值: ${mcapStr}  ·  综合分: ${isNum(r.score) ? r.score.toFixed(1) : "—"}`,
+                ];
+              },
+              title: () => "",
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { color: borderCol, drawBorder: false },
+            ticks: { color: mutedCol, font: { size: 11 }, callback: v => v + "%" },
+            title: { display: true, text: "30d 涨跌 % (右侧 = 上涨)",
+                     color: mutedCol, font: { size: 11 } },
+          },
+          y: {
+            min: 0,
+            grid: { color: borderCol, drawBorder: false },
+            ticks: { color: mutedCol, font: { size: 11 }, callback: v => v + "%" },
+            title: { display: true, text: "距 ATH % (越高 = 折价越深，潜在空间越大)",
+                     color: mutedCol, font: { size: 11 } },
+          },
+        },
+      },
+      plugins: [{
+        id: "crypto-zero-line",
+        afterDraw(chart) {
+          const { ctx, chartArea, scales } = chart;
+          if (!chartArea) return;
+          const xZero = scales.x.getPixelForValue(0);
+          ctx.save();
+          ctx.strokeStyle = mutedCol;
+          ctx.globalAlpha = 0.35;
+          ctx.setLineDash([4, 3]);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(xZero, chartArea.top); ctx.lineTo(xZero, chartArea.bottom);
+          ctx.stroke();
+          ctx.restore();
+          ctx.save();
+          ctx.fillStyle = mutedCol;
+          ctx.globalAlpha = 0.6;
+          ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.fillText("下跌区", chartArea.left + 8, chartArea.top + 14);
+          ctx.fillText("上涨区", xZero + 8, chartArea.top + 14);
+          ctx.restore();
+        },
+      }],
+    });
+  }
+
   // ─────────── PICK CARDS ───────────
-  function pickCard(row, mode) {
+  function pickCard(row, mode, ctx) {
+    // ctx: { isCrypto, meta } — supplied by caller via closure
+    const meta = (ctx && ctx.meta) || {};
+    const isCrypto = !!(ctx && ctx.isCrypto);
+    const pickMetrics = isCrypto ? PICK_METRICS_CRYPTO : PICK_METRICS_STOCK;
+
     const card = el("div", { class: "fund2-pick fund2-pick--" + mode });
 
     card.appendChild(el("div", { class: "fund2-pick-head" },
@@ -634,12 +776,13 @@
 
     const breakdown = el("div", { class: "fund2-pick-breakdown" });
     const subs = row.sub_scores || {};
-    METRIC_ORDER.forEach(k => {
+    pickMetrics.forEach(k => {
       const sub = subs[k];
       const raw = row[k];
       const subCls = classOf(sub);
       const r = el("div", { class: "fund2-pick-br-row" });
-      r.appendChild(el("span", { class: "fund2-pick-br-label" }, METRIC_LABEL[k]));
+      const label = (meta[k] && meta[k].label) || k;
+      r.appendChild(el("span", { class: "fund2-pick-br-label" }, label));
       const track = el("div", { class: "fund2-pick-br-track" });
       if (isNum(sub)) {
         track.appendChild(el("div", {
@@ -648,46 +791,116 @@
         }));
       }
       r.appendChild(track);
-      const isPct = (k === "rev_growth" || k === "eps_growth");
-      r.appendChild(el("span", { class: "fund2-pick-br-raw " + (isPct ? "pct" : "") },
-        isPct ? fmtPct(raw) : fmt2(raw)));
+      r.appendChild(el("span", { class: "fund2-pick-br-raw " + (PCT_METRICS.has(k) ? "pct" : "") },
+        formatMetricValue(k, raw)));
       breakdown.appendChild(r);
     });
     card.appendChild(breakdown);
 
-    const subEntries = METRIC_ORDER.map(k => ({ k, s: subs[k] })).filter(e => isNum(e.s));
+    // strongest / weakest tags — pulled from ALL sub-scores (not just the visible 6)
+    const subEntries = Object.keys(meta).map(k => ({ k, s: subs[k] })).filter(e => isNum(e.s));
     if (subEntries.length > 0) {
       subEntries.sort((a, b) => b.s - a.s);
       const strongest = subEntries[0];
       const weakest = subEntries[subEntries.length - 1];
+      const labelOf = k => (meta[k] && meta[k].label) || k;
       const tags = el("div", { class: "fund2-pick-tags" });
       tags.appendChild(el("span", { class: "fund2-pick-tag fund2-pick-tag--up" },
-        "强 ", el("strong", null, METRIC_LABEL[strongest.k]), " " + Math.round(strongest.s)));
+        "强 ", el("strong", null, labelOf(strongest.k)), " " + Math.round(strongest.s)));
       tags.appendChild(el("span", { class: "fund2-pick-tag fund2-pick-tag--down" },
-        "弱 ", el("strong", null, METRIC_LABEL[weakest.k]), " " + Math.round(weakest.s)));
+        "弱 ", el("strong", null, labelOf(weakest.k)), " " + Math.round(weakest.s)));
       card.appendChild(tags);
     }
 
     return card;
   }
 
+  // Per-metric formatter: mcap as $X.YB, percents as %, ratios as N.NN.
+  function formatMetricValue(metric, v) {
+    if (!isNum(v)) return "—";
+    if (metric === "market_cap") return fmtNum(v);
+    if (PCT_METRICS.has(metric)) return fmtPct(v);
+    return fmt2(v);
+  }
+
   function renderPicks(payload) {
     const top = document.getElementById("fund2-top");
     const bot = document.getElementById("fund2-bot");
+    const ctx = {
+      isCrypto: payload.sector && payload.sector.metric_set === "crypto",
+      meta: payload.metrics_meta || {},
+    };
     if (top) {
       top.innerHTML = "";
-      (payload.top_picks || []).forEach(r => top.appendChild(pickCard(r, "good")));
+      (payload.top_picks || []).forEach(r => top.appendChild(pickCard(r, "good", ctx)));
     }
     if (bot) {
       bot.innerHTML = "";
-      (payload.bottom_picks || []).forEach(r => bot.appendChild(pickCard(r, "high")));
+      (payload.bottom_picks || []).forEach(r => bot.appendChild(pickCard(r, "high", ctx)));
     }
   }
 
   // ─────────── LEDGER TABLE ───────────
+
+  // Per-sector trailing-column spec. The first 6 columns (#, Code, Name,
+  // Sub-sector, Score, Price) are fixed; the trailing 7 vary by sector.
+  function tableColumnsFor(payload) {
+    const isCrypto = payload.sector && payload.sector.metric_set === "crypto";
+    if (isCrypto) {
+      return [
+        { key: "market_cap",  label: "市值",      fmt: fmtNum,                  pct: false },
+        { key: "vol_to_mcap", label: "Vol/MCap", fmt: fmtPct,                  pct: true  },
+        { key: "mom_7d",      label: "7d 涨跌",   fmt: fmtPct,                  pct: true  },
+        { key: "mom_30d",     label: "30d 涨跌",  fmt: fmtPct,                  pct: true  },
+        { key: "ath_dist",    label: "距 ATH",    fmt: fmtPct,                  pct: true  },
+        { key: "volatility",  label: "1y 区间",   fmt: fmtPct,                  pct: true  },
+        { key: "analyst_target", label: "ATH",   fmt: v => isNum(v) ? "$" + v.toFixed(2) : "—" },
+      ];
+    }
+    return [
+      { key: "pe",          label: "PE",         fmt: fmt1 },
+      { key: "pe_fwd",      label: "Fwd PE",     fmt: fmt1 },
+      { key: "peg_av",      label: "PEG (AV)",   fmt: fmt2 },
+      { key: "peg_fwd",     label: "PEG (Fwd)",  fmt: fmt2 },
+      { key: "rev_growth",  label: "营收 YoY",   fmt: fmtPct, pct: true },
+      { key: "eps_growth",  label: "利润 YoY",   fmt: fmtPct, pct: true },
+      { key: "market_cap",  label: "市值",       fmt: fmtNum },
+    ];
+  }
+
+  function rebuildTableHead(payload) {
+    const thead = document.querySelector("#fund2-table thead tr");
+    if (!thead) return;
+    thead.innerHTML = "";
+    // Fixed leading columns
+    [
+      { key: "rank",       label: "#",      cls: "fund2-th-rank",  type: "num"  },
+      { key: "ticker",     label: "代码",                                 type: "text" },
+      { key: "name",       label: "公司",                                 type: "text" },
+      { key: "sub_sector", label: "子板块",                              type: "text" },
+      { key: "score",      label: "综合分",  cls: "fund2-th-score", type: "num"  },
+      { key: "price",      label: "现价",                                 type: "num"  },
+    ].forEach(c => {
+      const th = el("th", { class: c.cls || "", "data-sort": c.key, "data-type": c.type },
+                    c.label);
+      thead.appendChild(th);
+    });
+    tableColumnsFor(payload).forEach(c => {
+      thead.appendChild(el("th", { "data-sort": c.key, "data-type": "num" }, c.label));
+    });
+  }
+
   const NUM_KEYS = new Set([
-    "score", "rank", "pe", "pe_fwd", "peg_av", "peg_fwd",
-    "rev_growth", "eps_growth", "market_cap",
+    "score", "rank", "price",
+    // 20-metric stock framework
+    "pe", "pe_fwd", "peg_av", "peg_fwd", "ps", "pb", "ev_ebitda",
+    "eps", "roe", "roic", "gross_margin", "op_margin",
+    "rev_growth", "eps_growth", "fcf_yield",
+    "de", "interest_cov", "current_ratio",
+    "div_yield", "buyback_yield", "beta",
+    "market_cap", "analyst_target",
+    // Crypto metrics
+    "vol_to_mcap", "mom_7d", "mom_30d", "ath_dist", "volatility",
   ]);
 
   function applyTable(payload) {
@@ -772,52 +985,70 @@
       }
       tr.appendChild(priceTd);
 
-      tr.appendChild(el("td", { class: "num" }, fmt1(r.pe)));
-      tr.appendChild(el("td", { class: "num" }, fmt1(r.pe_fwd)));
-      tr.appendChild(el("td", { class: "num" }, fmt2(r.peg_av)));
-      tr.appendChild(el("td", { class: "num" }, fmt2(r.peg_fwd)));
-      tr.appendChild(el("td", { class: "num pct" }, fmtPct(r.rev_growth)));
-      tr.appendChild(el("td", { class: "num pct" }, fmtPct(r.eps_growth)));
-      tr.appendChild(el("td", { class: "num" }, fmtNum(r.market_cap)));
+      // Trailing columns are sector-specific. tableColumnsFor(payload) returns
+      // the list; same list drives the <thead> rebuild in applyTable.
+      tableColumnsFor(payload).forEach(col => {
+        tr.appendChild(el("td", { class: col.cls || "num" + (col.pct ? " pct" : "") },
+          col.fmt(r[col.key])));
+      });
       tbody.appendChild(tr);
 
       if (isExp) {
         const exTr = el("tr", { class: "fund2-row-ex" });
         const exTd = el("td", { class: "fund2-row-ex-td", colspan: "13" });
-        const grid = el("div", { class: "fund2-ex-grid" });
-        grid.appendChild(el("div", { class: "fund2-ex-head" },
-          "🔬 6 维度评分构成 · ", el("span", { class: "muted" }, r.ticker || "")));
-        const bars = el("div", { class: "fund2-ex-bars" });
-        const subs = r.sub_scores || {};
-        METRIC_ORDER.forEach(k => {
-          const sub = subs[k];
-          const raw = r[k];
-          const w = (payload.sector && payload.sector.weights && payload.sector.weights[k]) || 0;
-          const isPct = (k === "rev_growth" || k === "eps_growth");
-          const dirArrow = METRIC_DIRECTION[k] === "lower" ? "↓越低越好" : "↑越高越好";
-          const block = el("div", { class: "fund2-ex-block" });
-          block.appendChild(el("div", { class: "fund2-ex-b-label" },
-            METRIC_LABEL[k],
-            el("span", { class: "fund2-ex-b-dir muted" }, " · " + dirArrow),
-          ));
-          const track = el("div", { class: "fund2-ex-b-track" });
-          if (isNum(sub)) {
-            track.appendChild(el("div", {
-              class: "fund2-ex-b-fill fund2-c-bg-" + classOf(sub),
-              style: "width:" + Math.max(0, Math.min(100, sub)) + "%;",
-            }));
-          }
-          block.appendChild(track);
-          block.appendChild(el("div", { class: "fund2-ex-b-foot" },
-            el("span", { class: "fund2-ex-b-raw" }, "原值 " + (isPct ? fmtPct(raw) : fmt2(raw))),
-            el("span", { class: "fund2-ex-b-sub fund2-c-" + classOf(sub) },
-              "子分 " + (isNum(sub) ? Math.round(sub) : "—")),
-            el("span", { class: "fund2-ex-b-w muted" }, "权重 " + w + "%"),
-          ));
-          bars.appendChild(block);
+        const wrap = el("div", { class: "fund2-ex-grid" });
+        const meta = payload.metrics_meta || {};
+        const groups = payload.metric_groups || {};
+        const weights = (payload.sector && payload.sector.weights) || {};
+        const metricCount = Object.keys(meta).length;
+        wrap.appendChild(el("div", { class: "fund2-ex-head" },
+          "🔬 " + metricCount + " 维度评分构成 · ",
+          el("span", { class: "muted" }, r.ticker || ""),
+        ));
+        // Group metrics by category (Valuation / Profitability / …).
+        const byGroup = {};
+        Object.entries(meta).forEach(([k, cfg]) => {
+          const g = cfg.group || "other";
+          (byGroup[g] = byGroup[g] || []).push(k);
         });
-        grid.appendChild(bars);
-        exTd.appendChild(grid);
+        const subs = r.sub_scores || {};
+        Object.keys(groups).forEach(g => {
+          const metricsInGroup = byGroup[g];
+          if (!metricsInGroup || metricsInGroup.length === 0) return;
+          const groupBlock = el("div", { class: "fund2-ex-group" });
+          groupBlock.appendChild(el("div", { class: "fund2-ex-group-h" }, groups[g]));
+          const bars = el("div", { class: "fund2-ex-bars" });
+          metricsInGroup.forEach(k => {
+            const cfg = meta[k];
+            const sub = subs[k];
+            const raw = r[k];
+            const w = weights[k] || 0;
+            const dirArrow = LOWER_BETTER_METRICS.has(k) ? "↓越低越好" : "↑越高越好";
+            const block = el("div", { class: "fund2-ex-block" });
+            block.appendChild(el("div", { class: "fund2-ex-b-label" },
+              cfg.label || k,
+              el("span", { class: "fund2-ex-b-dir muted" }, " · " + dirArrow),
+            ));
+            const track = el("div", { class: "fund2-ex-b-track" });
+            if (isNum(sub)) {
+              track.appendChild(el("div", {
+                class: "fund2-ex-b-fill fund2-c-bg-" + classOf(sub),
+                style: "width:" + Math.max(0, Math.min(100, sub)) + "%;",
+              }));
+            }
+            block.appendChild(track);
+            block.appendChild(el("div", { class: "fund2-ex-b-foot" },
+              el("span", { class: "fund2-ex-b-raw" }, "原值 " + formatMetricValue(k, raw)),
+              el("span", { class: "fund2-ex-b-sub fund2-c-" + classOf(sub) },
+                "子分 " + (isNum(sub) ? Math.round(sub) : "—")),
+              el("span", { class: "fund2-ex-b-w muted" }, "权重 " + w + "%"),
+            ));
+            bars.appendChild(block);
+          });
+          groupBlock.appendChild(bars);
+          wrap.appendChild(groupBlock);
+        });
+        exTd.appendChild(wrap);
         exTr.appendChild(exTd);
         tbody.appendChild(exTr);
       }
@@ -827,6 +1058,12 @@
   }
 
   function bindTableEvents(payload) {
+    // Rebuild thead based on sector type (stock cols vs crypto cols).
+    rebuildTableHead(payload);
+    // Reset score sort indicator
+    const scoreTh = document.querySelector('#fund2-table th[data-sort="score"]');
+    if (scoreTh) scoreTh.textContent = scoreTh.textContent.trim() + " ▼";
+
     document.querySelectorAll("#fund2-table th[data-sort]").forEach(th => {
       th.onclick = () => {
         const k = th.getAttribute("data-sort");
@@ -834,7 +1071,7 @@
           tableState.sortDir = tableState.sortDir === "asc" ? "desc" : "asc";
         } else {
           tableState.sortKey = k;
-          tableState.sortDir = (k === "ticker" || k === "name") ? "asc" : "desc";
+          tableState.sortDir = (k === "ticker" || k === "name" || k === "sub_sector") ? "asc" : "desc";
         }
         document.querySelectorAll("#fund2-table th").forEach(t => {
           t.textContent = t.textContent.replace(/\s[▲▼]$/, "");
