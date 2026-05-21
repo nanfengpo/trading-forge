@@ -875,6 +875,14 @@ class DecisionWindow {
         // otherwise the FK constraint trips and tokens are never recorded.
         saveHistorySafely(this)
           .then(() => this._flushUsageEvents())
+          .then(() => {
+            // Regenerate the watchlist comprehensive report for this ticker
+            // in the background. Fire-and-forget — UI degrades gracefully.
+            const t = this.params?.ticker;
+            if (t && window.ComprehensiveReport) {
+              window.ComprehensiveReport.autoRegenerate(t);
+            }
+          })
           .catch(e => console.warn("post-complete persistence", e));
         break;
       case "error":
@@ -2602,6 +2610,9 @@ const History = {
   // HistoryPage.render() so both layers stay in sync.
   render() {},
 };
+// Expose for cross-script access (comprehensive.js) — bare `History`
+// otherwise collides with the browser's window.History global.
+window._appHistory = History;
 
 // =========================================================================
 // Auth UI — login / signup / magic-link modal
@@ -3203,11 +3214,16 @@ const Watchlist = {
         </span>
       </div>`;
 
-    this.mainEl.innerHTML = head + stats + this._latestDecisionHTML(entry);
+    const compHTML = `<div class="wl-comp-mount" id="wl-comp-mount-${escapeHtml(entry.id)}"></div>`;
+    this.mainEl.innerHTML = head + stats + compHTML + this._latestDecisionHTML(entry);
     this._wireMain(entry);
     // Lazily fetch the full decision payload (for summary text) and re-render
     // just the decision block when it lands.
     this._maybeLoadFullDecision(entry);
+    if (window.ComprehensiveReport) {
+      const mount = this.mainEl.querySelector(".wl-comp-mount");
+      if (mount) window.ComprehensiveReport.attach(entry, mount);
+    }
   },
 
   _matchedDecisions(entry) {
@@ -3356,6 +3372,9 @@ const Watchlist = {
     });
   },
 };
+// Expose Watchlist UI to other scripts. window.Watchlist is already taken by
+// auth.js (the Supabase CRUD wrapper); use a distinct name to avoid collision.
+window._appWatchlist = Watchlist;
 
 // =========================================================================
 // HistoryPage — legacy shim. The original full-page history view was merged

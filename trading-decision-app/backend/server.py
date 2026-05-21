@@ -370,6 +370,53 @@ async def dataflows_cache_stats() -> JSONResponse:
     return JSONResponse(cache_stats())
 
 
+# ---- comprehensive report (自选 page 综合报告) -------------------------
+
+@app.post("/api/comprehensive-report/generate")
+async def comprehensive_report_generate(
+    payload: Dict[str, Any],
+    user: Optional[Dict[str, Any]] = Depends(maybe_user),
+) -> JSONResponse:
+    """Aggregate the user's historical decisions for one ticker into a single
+    multi-section synthesis. Stateless compute — the frontend persists the
+    result to Supabase (`comprehensive_reports` table, RLS-scoped).
+
+    Body:
+      {
+        "ticker": "NVDA",
+        "decisions": [ { id, ticker, trade_date, rating, completedAt,
+                         runState, params }, ... ],
+        "quote": { price, change_pct, ... }   # optional; backend fetches if missing
+        "llm_provider": "anthropic",          # optional preference
+        "deep_model": "claude-opus-4-7"       # optional preference
+      }
+    """
+    from comprehensive_report import generate as _generate
+
+    ticker = (payload.get("ticker") or "").strip().upper()
+    decisions = payload.get("decisions") or []
+    if not ticker:
+        return JSONResponse({"error": "missing ticker"}, status_code=400)
+    if not isinstance(decisions, list) or not decisions:
+        return JSONResponse({"error": "decisions must be a non-empty list"}, status_code=400)
+    if len(decisions) > 50:
+        return JSONResponse({"error": "too many decisions (max 50)"}, status_code=400)
+
+    quote = payload.get("quote") or None
+    llm_provider = payload.get("llm_provider") or ""
+    deep_model = payload.get("deep_model") or ""
+
+    report = await asyncio.to_thread(
+        _generate, ticker, decisions, quote, llm_provider, deep_model,
+    )
+    if report is None:
+        return JSONResponse(
+            {"error": "report generation failed — check backend logs or API key configuration"},
+            status_code=502,
+        )
+    return JSONResponse({"ticker": ticker, "report": report})
+
+
 # ---- reflections / memory log ------------------------------------------
 
 @app.get("/api/reflections")
@@ -547,6 +594,9 @@ if STATIC_DIR.exists():
     @app.get("/fundamentals.js")
     async def fundamentals_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "fundamentals.js", media_type="application/javascript")
+    @app.get("/comprehensive.js")
+    async def comprehensive_js() -> FileResponse:
+        return FileResponse(STATIC_DIR / "comprehensive.js", media_type="application/javascript")
     @app.get("/auth.js")
     async def auth_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "auth.js", media_type="application/javascript")

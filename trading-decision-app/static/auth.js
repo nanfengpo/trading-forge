@@ -253,7 +253,76 @@
     },
   };
 
+  // -------------------------------------------------- ComprehensiveReports
+  // One row per (user, ticker). Stores the LLM-aggregated synthesis of all
+  // historical decisions for that ticker. RLS-scoped by Supabase. Falls back
+  // to localStorage when the user is anonymous.
+  const ComprehensiveReports = {
+    LOCAL_KEY: "tda:comp-reports",
+
+    async get(ticker) {
+      if (!client || !session) {
+        const local = JSON.parse(localStorage.getItem(this.LOCAL_KEY) || "{}");
+        return local[(ticker || "").toUpperCase()] || null;
+      }
+      const { data, error } = await client
+        .from("comprehensive_reports")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .eq("ticker", (ticker || "").toUpperCase())
+        .maybeSingle();
+      if (error) {
+        if (error.code === "42P01" || /relation .* does not exist/i.test(error.message)) {
+          console.warn("[comp-reports] table missing — run migration 0007");
+          return null;
+        }
+        console.error("[comp-reports] get", error);
+        return null;
+      }
+      return data;
+    },
+
+    async upsert(ticker, payload) {
+      const tu = (ticker || "").toUpperCase();
+      const row = {
+        ticker: tu,
+        sections: payload.sections || {},
+        model: payload.model || null,
+        decision_ids: payload.decision_ids || [],
+        decisions_count: payload.decisions_count || 0,
+        quote_snapshot: payload.quote_snapshot || {},
+        status: payload.status || "ready",
+        error_message: payload.error_message || null,
+        generated_at: payload.generated_at || new Date().toISOString(),
+      };
+      if (!client || !session) {
+        const all = JSON.parse(localStorage.getItem(this.LOCAL_KEY) || "{}");
+        all[tu] = { ...row, user_id: "local", updated_at: new Date().toISOString() };
+        try { localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all)); }
+        catch (e) { console.warn("comp-reports local save failed", e); }
+        return all[tu];
+      }
+      const { data, error } = await client
+        .from("comprehensive_reports")
+        .upsert({ ...row, user_id: session.user.id }, { onConflict: "user_id,ticker" })
+        .select()
+        .maybeSingle();
+      if (error) { console.error("[comp-reports] upsert", error); return null; }
+      return data;
+    },
+
+    async markGenerating(ticker) {
+      const cur = await this.get(ticker);
+      return this.upsert(ticker, {
+        ...(cur || {}),
+        sections: (cur && cur.sections) || {},
+        status: "generating",
+      });
+    },
+  };
+
   window.Auth = Auth;
   window.Decisions = Decisions;
   window.Watchlist = Watchlist;
+  window.ComprehensiveReports = ComprehensiveReports;
 })();
