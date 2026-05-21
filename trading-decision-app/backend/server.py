@@ -649,6 +649,16 @@ if STATIC_DIR.exists():
     async def favicon_svg() -> FileResponse:
         return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
 
+    # SPA fallback — any GET that didn't match an API route or a static asset
+    # falls through to index.html so the JS Router can paint the right tab
+    # from location.pathname. CF Pages does the same via static/_redirects;
+    # this rule covers local dev and direct Fly hits.
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> FileResponse:
+        # FastAPI matches specific routes first, so we only land here for
+        # truly unrouted paths like /decisions, /opportunities, etc.
+        return FileResponse(STATIC_DIR / "index.html")
+
 
 # ---------- helpers -----------------------------------------------------------
 

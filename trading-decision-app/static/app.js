@@ -129,19 +129,86 @@ const REPORT_TITLE_ZH = {
 };
 
 // =========================================================================
-// Tabs (top-level: 首页 / AI 决策 / 策略库)
+// Router — SPA URL routing
+//
+// Each top-level tab gets a clean URL. Clicking a tab pushes a new entry
+// to history; back/forward use popstate; deep links work because CF Pages
+// rewrites unknown paths to /index.html (see static/_redirects).
 // =========================================================================
-function initTabs() {
-  document.querySelectorAll("nav.tabs .tabs-left button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("nav.tabs .tabs-left button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      const target = btn.dataset.tab;
-      document.querySelectorAll("section.tab-content").forEach(s => s.classList.remove("active"));
-      document.getElementById(target).classList.add("active");
+const Router = {
+  // tab id → URL path (no trailing slash except "/")
+  routes: {
+    home:          "/",
+    watchlist:     "/watchlist",
+    decisions:     "/decisions",
+    fundamentals: "/fundamentals",
+    opportunities: "/opportunities",
+    library:       "/library",
+    favorites:     "/favorites",
+    profile:       "/profile",
+  },
+
+  _tabFromPath(path) {
+    const clean = (path || "/").replace(/\/+$/, "") || "/";
+    for (const [tab, p] of Object.entries(this.routes)) {
+      if (p === clean) return tab;
+    }
+    return null;
+  },
+
+  _pathFromTab(tab) {
+    return this.routes[tab] || "/";
+  },
+
+  go(tab, { push = true } = {}) {
+    if (!tab || !this.routes[tab]) tab = "home";
+    document.querySelectorAll("nav.tabs .tabs-left button").forEach(b => {
+      b.classList.toggle("active", b.dataset.tab === tab);
     });
-  });
-}
+    document.querySelectorAll("section.tab-content").forEach(s => {
+      s.classList.toggle("active", s.id === tab);
+    });
+    if (push) {
+      const path = this._pathFromTab(tab);
+      if (location.pathname !== path) {
+        history.pushState({ tab }, "", path);
+      }
+    }
+    document.title = this._titleFor(tab);
+    // Scroll back to top whenever the user changes tabs.
+    window.scrollTo({ top: 0, behavior: "instant" in document.documentElement.style ? "instant" : "auto" });
+  },
+
+  _titleFor(tab) {
+    const labels = {
+      home: "智策 TradingForge · 多智能体投研工作台",
+      watchlist: "自选 · 智策 TradingForge",
+      decisions: "决策 · 智策 TradingForge",
+      fundamentals: "基本面看板 · 智策 TradingForge",
+      opportunities: "24h 机会 · 智策 TradingForge",
+      library: "策略库 · 智策 TradingForge",
+      favorites: "我的收藏 · 智策 TradingForge",
+      profile: "个人中心 · 智策 TradingForge",
+    };
+    return labels[tab] || labels.home;
+  },
+
+  init() {
+    document.querySelectorAll("nav.tabs .tabs-left button").forEach(btn => {
+      btn.addEventListener("click", () => this.go(btn.dataset.tab));
+    });
+    window.addEventListener("popstate", () => {
+      const tab = this._tabFromPath(location.pathname) || "home";
+      this.go(tab, { push: false });
+    });
+    // Initial paint — pick tab from URL.
+    const initialTab = this._tabFromPath(location.pathname) || "home";
+    this.go(initialTab, { push: false });
+  },
+};
+
+// Legacy alias kept so older call sites (initLibrary, etc.) keep working.
+function initTabs() { Router.init(); }
 
 // =========================================================================
 // Library (78 strategies — unchanged from v1)
@@ -4301,9 +4368,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   Opportunities.init();
   Profile.init();
 
-  // Default landing tab: ⭐ 自选 (was: AI 决策)
-  const watchBtn = document.querySelector('nav.tabs button[data-tab="watchlist"]');
-  if (watchBtn) watchBtn.click();
+  // Default landing tab is the homepage. Router.init() already painted
+  // the correct tab based on the URL — no autoclick needed here.
 });
 
 // History.save needs to be async-safe — DecisionWindow calls it on complete

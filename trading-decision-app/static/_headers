@@ -1,0 +1,19 @@
+# CF Pages response headers.
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=()
+
+# index.html must always be fresh — it's the only thing that picks up
+# new ?v=... query strings on JS/CSS bundles.
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Versioned JS/CSS use ?v= query strings — safe to cache for a long time
+# since changing the ?v= triggers a fresh request URL.
+/*.js
+  Cache-Control: public, max-age=31536000
+/*.css
+  Cache-Control: public, max-age=31536000
