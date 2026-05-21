@@ -324,10 +324,6 @@
              data-1p-ignore data-lpignore="true"
              onfocus="this.removeAttribute('readonly'); this.removeAttribute('value');"
              placeholder="🔍 搜索代码 / 备注 / 决策内容…" />
-      <select id="decisions-ticker-filter" class="decisions-ticker-filter"
-              title="按标的筛选历史决策">
-        <option value="">全部标的</option>
-      </select>
       <select id="decisions-sort" class="decisions-sort">
         <option value="time-desc">最近 ↓</option>
         <option value="time-asc">最早 ↑</option>
@@ -427,6 +423,27 @@
     <!-- Sidebar layout: list of all decisions ←→ active decision cockpit -->
     <div class="decisions-shell">
       <aside class="decisions-sidebar">
+        <!-- Multi-select ticker filter (sourced from watchlist; sidebar width) -->
+        <div class="ticker-filter" id="decisions-ticker-filter" data-open="false">
+          <button type="button" class="ticker-filter-trigger" id="ticker-filter-trigger"
+                  aria-haspopup="listbox" aria-expanded="false">
+            <span class="ticker-filter-label" id="ticker-filter-label">全部标的</span>
+            <span class="ticker-filter-caret">▾</span>
+          </button>
+          <div class="ticker-filter-panel" id="ticker-filter-panel" role="listbox" aria-multiselectable="true">
+            <div class="ticker-filter-search-wrap">
+              <input type="text" class="ticker-filter-search" id="ticker-filter-search"
+                     placeholder="搜索标的…" autocomplete="off" />
+            </div>
+            <div class="ticker-filter-actions">
+              <button type="button" class="ticker-filter-action" data-act="all">全选自选</button>
+              <button type="button" class="ticker-filter-action" data-act="clear">清空</button>
+            </div>
+            <div class="ticker-filter-options" id="ticker-filter-options">
+              <!-- checkbox rows injected by DecisionsPage.renderTickerFilter() -->
+            </div>
+          </div>
+        </div>
         <div class="decisions-list-empty" id="decisions-list-empty"></div>
         <ul class="decisions-list" id="decisions-list"></ul>
       </aside>
