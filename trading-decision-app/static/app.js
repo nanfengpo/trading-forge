@@ -99,6 +99,7 @@ const CUSTOM_VALUE = "__custom__";
 const AGENT_DISPLAY_ZH = {
   "Market Analyst": "市场分析师",
   "Social Analyst": "情绪分析师",
+  "Sentiment Analyst": "情绪分析师",
   "News Analyst": "新闻分析师",
   "Fundamentals Analyst": "基本面分析师",
   "Bull Researcher": "牛市研究员",

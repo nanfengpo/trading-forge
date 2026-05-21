@@ -8,6 +8,7 @@ from tradingagents.agents import *
 from tradingagents.agents.utils.agent_states import AgentState
 from tradingagents.dataflows.config import get_config
 
+from .analyst_execution import build_analyst_execution_plan
 from .conditional_logic import ConditionalLogic
 from .parallel import wire_parallel_analysts
 
@@ -21,12 +22,14 @@ class GraphSetup:
         deep_thinking_llm: Any,
         tool_nodes: Dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
+        analyst_concurrency_limit: int = 1,
     ):
         """Initialize with required components."""
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
+        self.analyst_concurrency_limit = analyst_concurrency_limit
 
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
@@ -40,41 +43,17 @@ class GraphSetup:
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
         """
-        if len(selected_analysts) == 0:
-            raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
+        plan = build_analyst_execution_plan(
+            selected_analysts,
+            concurrency_limit=self.analyst_concurrency_limit,
+        )
 
-        # Create analyst nodes
-        analyst_nodes = {}
-        delete_nodes = {}
-        tool_nodes = {}
-
-        if "market" in selected_analysts:
-            analyst_nodes["market"] = create_market_analyst(
-                self.quick_thinking_llm
-            )
-            delete_nodes["market"] = create_msg_delete()
-            tool_nodes["market"] = self.tool_nodes["market"]
-
-        if "social" in selected_analysts:
-            analyst_nodes["social"] = create_social_media_analyst(
-                self.quick_thinking_llm
-            )
-            delete_nodes["social"] = create_msg_delete()
-            tool_nodes["social"] = self.tool_nodes["social"]
-
-        if "news" in selected_analysts:
-            analyst_nodes["news"] = create_news_analyst(
-                self.quick_thinking_llm
-            )
-            delete_nodes["news"] = create_msg_delete()
-            tool_nodes["news"] = self.tool_nodes["news"]
-
-        if "fundamentals" in selected_analysts:
-            analyst_nodes["fundamentals"] = create_fundamentals_analyst(
-                self.quick_thinking_llm
-            )
-            delete_nodes["fundamentals"] = create_msg_delete()
-            tool_nodes["fundamentals"] = self.tool_nodes["fundamentals"]
+        analyst_factories = {
+            "market": lambda: create_market_analyst(self.quick_thinking_llm),
+            "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
+            "news": lambda: create_news_analyst(self.quick_thinking_llm),
+            "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
+        }
 
         # Create researcher and manager nodes
         bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
@@ -96,6 +75,7 @@ class GraphSetup:
         #   (a) parallel — each analyst is an isolated sub-graph; all run
         #       concurrently fan-out from START, fan-in to "Analysts Done"
         #   (b) sequential (default) — chain through one analyst at a time
+        #       using upstream's execution-plan abstraction (v0.2.5).
         # Selected via cfg["parallel_analysts"] (or env TRADINGAGENTS_PARALLEL_ANALYSTS=1).
         parallel_mode = bool(get_config().get("parallel_analysts"))
 
@@ -113,47 +93,43 @@ class GraphSetup:
             # Each analyst becomes a compiled sub-StateGraph with its own
             # private `messages` channel — they run truly concurrently
             # without scrambling each other's tool-call/result threads.
+            analyst_nodes = {key: analyst_factories[key]() for key in selected_analysts}
+            delete_nodes = {key: create_msg_delete() for key in selected_analysts}
             wire_parallel_analysts(
                 workflow,
                 selected_analysts,
                 analyst_nodes,
                 delete_nodes,
-                tool_nodes,
+                self.tool_nodes,
                 self.conditional_logic,
                 join_node_name="Analysts Done",
                 next_node_name="Bull Researcher",
             )
         else:
-            # Sequential — the original behaviour. Each analyst's tool loop
-            # runs on the parent's shared `messages` channel; ``msg_clear``
-            # wipes between analysts.
-            for analyst_type, node in analyst_nodes.items():
-                workflow.add_node(f"{analyst_type.capitalize()} Analyst", node)
-                workflow.add_node(
-                    f"Msg Clear {analyst_type.capitalize()}", delete_nodes[analyst_type]
-                )
-                workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
+            # Sequential — upstream's execution-plan flow. Each analyst's
+            # tool loop runs on the parent's shared `messages` channel;
+            # ``msg_clear`` wipes between analysts.
+            for spec in plan.specs:
+                workflow.add_node(spec.agent_node, analyst_factories[spec.key]())
+                workflow.add_node(spec.clear_node, create_msg_delete())
+                workflow.add_node(spec.tool_node, self.tool_nodes[spec.key])
 
-            # Define edges — start with the first analyst
-            first_analyst = selected_analysts[0]
-            workflow.add_edge(START, f"{first_analyst.capitalize()} Analyst")
+            workflow.add_edge(START, plan.specs[0].agent_node)
 
-            # Connect analysts in sequence
-            for i, analyst_type in enumerate(selected_analysts):
-                current_analyst = f"{analyst_type.capitalize()} Analyst"
-                current_tools = f"tools_{analyst_type}"
-                current_clear = f"Msg Clear {analyst_type.capitalize()}"
+            for i, spec in enumerate(plan.specs):
+                current_analyst = spec.agent_node
+                current_tools = spec.tool_node
+                current_clear = spec.clear_node
 
                 workflow.add_conditional_edges(
                     current_analyst,
-                    getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
+                    getattr(self.conditional_logic, f"should_continue_{spec.key}"),
                     [current_tools, current_clear],
                 )
                 workflow.add_edge(current_tools, current_analyst)
 
-                if i < len(selected_analysts) - 1:
-                    next_analyst = f"{selected_analysts[i+1].capitalize()} Analyst"
-                    workflow.add_edge(current_clear, next_analyst)
+                if i < len(plan.specs) - 1:
+                    workflow.add_edge(current_clear, plan.specs[i + 1].agent_node)
                 else:
                     workflow.add_edge(current_clear, "Bull Researcher")
 

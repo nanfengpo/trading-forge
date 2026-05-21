@@ -34,14 +34,24 @@ git push origin main
 
 ## 我们做了什么改动需要保护？
 
-**当前 4 处源码改动（v6 起）**，全部在 `patches/` 下作为 git diff 维护：
+**当前源码改动（v6 起，跟随 upstream v0.2.5 同步后重新生成）**，全部在 `patches/` 下作为 git diff 维护：
 
 | 文件 | 改动 | 出现在 |
 |---|---|---|
 | `tradingagents/llm_clients/factory.py` | `_OPENAI_COMPATIBLE` 加入 `"kimi"` | `0001-add-kimi-provider.patch` |
-| `tradingagents/llm_clients/openai_client.py` | `_PROVIDER_CONFIG` 加入 Kimi base URL + key | `0001-add-kimi-provider.patch` |
-| `tradingagents/dataflows/interface.py` | 末尾追加 6 行 — 自动调用 premium_bridge.register() | `0002-premium-dataflows-bridge.patch` |
-| `tradingagents/dataflows/premium_bridge.py` | 新文件 — 把外部 `dataflows/` 包注册为 vendor | `0002-premium-dataflows-bridge.patch` |
+| `tradingagents/llm_clients/openai_client.py` | `_PROVIDER_BASE_URL` 加入 Kimi base URL（v0.2.5 后拆成 url + env 两个 dict） | `0001-add-kimi-provider.patch` |
+| `tradingagents/llm_clients/api_key_env.py` | `PROVIDER_API_KEY_ENV` 加入 `"kimi": "MOONSHOT_API_KEY"` | `0001-add-kimi-provider.patch` |
+| `tradingagents/dataflows/interface.py` | 末尾追加 — 自动调用 premium_bridge.register() | `0002-premium-dataflows-bridge.patch` |
+| `tradingagents/dataflows/premium_bridge.py` | 新文件 — 把外部 `dataflows/` 包注册为 vendor | `0002` + `0003` |
+| `tradingagents/dataflows/stockstats_utils.py` | yfinance retry / 容错增强 | `0004-yfinance-retry-broader.patch` |
+| `tradingagents/agents/analysts/{fundamentals,market,news}_analyst.py` | 系统 prompt 精简（节省 token） | `0005-prompt-compaction.patch` |
+| `tradingagents/agents/utils/report_schemas.py` | 新文件 — 结构化 analyst report schemas | `0006-report-schemas-foundation.patch` |
+| `tradingagents/graph/parallel.py` | 新文件 — analyst 并行执行（子图隔离） | `0007-parallel-analysts.patch` |
+| `tradingagents/graph/setup.py` | 增加 `parallel_mode` 分支，包裹 upstream v0.2.5 的 execution-plan 流程 | `0007-parallel-analysts.patch` |
+
+> v0.2.5 同步注意：原 `social_media_analyst` 被上游重命名为 `sentiment_analyst`，旧文件
+> 退化为 shim — 因此 `0005-prompt-compaction.patch` 删除了对 social_media_analyst 的修改
+> 部分；如需对新 `sentiment_analyst.py` 做 prompt 精简，请单独追加 patch。
 
 其他增强仍在外部：
 - 翻译层 — 在我们 backend 拦截 SSE 事件

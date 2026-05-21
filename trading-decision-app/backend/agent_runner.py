@@ -69,9 +69,12 @@ def _premium_vendor_routing(default_vendors: Dict[str, str]) -> Dict[str, str]:
     return out
 
 # Map of analyst keys -> display names (matches CLI MessageBuffer).
+# Wire key stays "social" for saved-config back-compat; display is
+# "Sentiment Analyst" since v0.2.5 (renamed agent now ingests news +
+# StockTwits + Reddit, not just social media). See upstream #557.
 ANALYST_DISPLAY = {
     "market": "Market Analyst",
-    "social": "Social Analyst",
+    "social": "Sentiment Analyst",
     "news": "News Analyst",
     "fundamentals": "Fundamentals Analyst",
 }
@@ -88,7 +91,7 @@ DEFAULT_ANALYSTS = ["market", "social", "news", "fundamentals"]
 # Pipeline stages used to drive the progress UI.
 PIPELINE_AGENTS = [
     {"id": "market", "name": "Market Analyst", "team": "Analyst Team"},
-    {"id": "social", "name": "Social Analyst", "team": "Analyst Team"},
+    {"id": "social", "name": "Sentiment Analyst", "team": "Analyst Team"},
     {"id": "news", "name": "News Analyst", "team": "Analyst Team"},
     {"id": "fundamentals", "name": "Fundamentals Analyst", "team": "Analyst Team"},
     {"id": "bull", "name": "Bull Researcher", "team": "Research Team"},
