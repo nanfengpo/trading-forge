@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TradingForge · 智策 · 多智能体投研工作台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/styles.css?v=20260525d">
+<link rel="stylesheet" href="/styles.css?v=20260525e">
 </head>
 <body>
 
@@ -764,13 +764,39 @@
 <!--  24h OPPORTUNITIES                                          -->
 <!-- ========================================================== -->
 <section class="tab-content" id="opportunities">
-  <h2>⚡ 24h 交易机会</h2>
-  <p class="muted">
-    后端持续扫描比特币插针、期权 IV 突变、社交媒体话题暴涨等信号。
-    每条机会都附带可执行策略推荐，点击右上角的 ⭐ 把感兴趣的卡片加入收藏。
-  </p>
+  <div class="opps-header">
+    <div>
+      <h2 style="margin:0; padding:0; border:none;">⚡ 24h 交易机会</h2>
+      <p class="muted" style="margin:4px 0 0; font-size:13px;">
+        后端持续监控宏观指标、自选标的资讯、财报日历、技术信号、加密行情；每条机会附"趋势判断 + 策略建议"。
+      </p>
+    </div>
+    <div class="opps-header-actions">
+      <button class="btn secondary small" id="opps-refresh">🔄 刷新</button>
+      <span class="muted opps-status-text" id="opps-status"></span>
+    </div>
+  </div>
+
+  <!-- KPI strip: how many of each category we have right now -->
+  <div class="opps-kpi" id="opps-kpi"></div>
 
   <div class="opps-toolbar opps-toolbar-stack">
+    <div class="filter-row">
+      <span class="label">类别</span>
+      <button class="chip active" data-opps-cat="all">全部</button>
+      <button class="chip" data-opps-cat="macro">🌐 宏观</button>
+      <button class="chip" data-opps-cat="news">📰 自选新闻</button>
+      <button class="chip" data-opps-cat="earnings">📅 财报</button>
+      <button class="chip" data-opps-cat="signal">📈 技术信号</button>
+      <button class="chip" data-opps-cat="crypto">₿ 加密</button>
+    </div>
+    <div class="filter-row">
+      <span class="label">趋势</span>
+      <button class="chip active" data-opps-trend="all">全部</button>
+      <button class="chip" data-opps-trend="bullish">🟢 看多</button>
+      <button class="chip" data-opps-trend="bearish">🔴 看空</button>
+      <button class="chip" data-opps-trend="neutral">⚪ 中性</button>
+    </div>
     <div class="filter-row">
       <span class="label">重要度</span>
       <button class="chip active" data-opps-sev="all">全部</button>
@@ -778,20 +804,6 @@
       <button class="chip" data-opps-sev="high">🟠 high</button>
       <button class="chip" data-opps-sev="watch">🟡 watch</button>
       <button class="chip" data-opps-sev="info">⚪ info</button>
-    </div>
-    <div class="filter-row">
-      <span class="label">品种</span>
-      <button class="chip active" data-opps-inst="all">全部</button>
-      <button class="chip" data-opps-inst="stock">📈 股票</button>
-      <button class="chip" data-opps-inst="etf">🧺 ETF</button>
-      <button class="chip" data-opps-inst="crypto">₿ 加密</button>
-      <button class="chip" data-opps-inst="commodity">🛢 商品</button>
-      <button class="chip" data-opps-inst="forex">💱 外汇</button>
-      <button class="chip" data-opps-inst="macro">🌐 宏观</button>
-    </div>
-    <div class="filter-row">
-      <button class="btn secondary small" id="opps-refresh">🔄 刷新</button>
-      <span class="muted" id="opps-status" style="font-size:12px;"></span>
     </div>
   </div>
 
@@ -1049,10 +1061,10 @@
   }
 </script>
 <script src="/auth.js"></script>
-<script src="/comprehensive.js?v=20260525d"></script>
+<script src="/comprehensive.js?v=20260525e"></script>
 <script src="/strategies.js"></script>
-<script src="/app.js?v=20260525d"></script>
+<script src="/app.js?v=20260525e"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/fundamentals.js?v=20260525d"></script>
+<script src="/fundamentals.js?v=20260525e"></script>
 </body>
 </html>

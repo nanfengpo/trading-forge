@@ -22,6 +22,46 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+# ----- shared utilities --------------------------------------------------
+
+def watchlist_tickers(limit: int = 30) -> List[str]:
+    """Return the tickers to scan, in priority order:
+      1. OPPS_WATCHLIST env (comma-separated) — explicit override
+      2. Supabase public.watchlist (when SUPABASE_SERVICE_ROLE_KEY is set)
+      3. Empty list — caller's detector should no-op rather than spam.
+    """
+    env_raw = os.environ.get("OPPS_WATCHLIST", "")
+    if env_raw.strip():
+        return [t.strip().upper() for t in env_raw.split(",") if t.strip()][:limit]
+
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not (url and key):
+        return []
+    try:
+        import requests
+        r = requests.get(
+            f"{url}/rest/v1/watchlist",
+            params={"select": "ticker", "limit": str(limit)},
+            headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            timeout=5,
+        )
+        if r.status_code >= 400:
+            logger.debug("supabase watchlist fetch %s: %s", r.status_code, r.text[:200])
+            return []
+        rows = r.json() or []
+        seen, out = set(), []
+        for row in rows:
+            t = str(row.get("ticker") or "").upper().strip()
+            if t and t not in seen:
+                seen.add(t)
+                out.append(t)
+        return out[:limit]
+    except Exception as e:
+        logger.debug("supabase watchlist fetch crashed: %s", e)
+        return []
+
+
 # ----- core types ---------------------------------------------------------
 
 @dataclass
@@ -38,6 +78,11 @@ class Opportunity:
     suggested_strategies: List[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     expires_at: Optional[str] = None
+    # v2.5 additions (2026-05): high-level grouping + LLM-free takeaway
+    category: str = "other"                              # macro|news|earnings|signal|crypto|other
+    trend: str = "neutral"                               # bullish|bearish|neutral
+    strategy_note: Optional[str] = None                  # 1–2 sentence "怎么看 / 怎么做"
+    url: Optional[str] = None                            # source link (news headlines)
 
     def to_json(self) -> dict:
         return asdict(self)

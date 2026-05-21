@@ -19,6 +19,7 @@ from .scanner import (
     get_feed,
     start_scanner,
     stop_scanner,
+    watchlist_tickers,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "get_feed",
     "start_scanner",
     "stop_scanner",
+    "watchlist_tickers",
 ]

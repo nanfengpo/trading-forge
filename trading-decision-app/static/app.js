@@ -2853,32 +2853,47 @@ const Opportunities = {
   pollInterval: 30000,
   cache: [],
   filterSev: "all",
-  filterInst: "all",
+  filterCat: "all",
+  filterTrend: "all",
   _timer: null,
+
+  // Backend tags every opportunity with one of these categories. Map keeps
+  // emoji + zh label in one place so the KPI strip + cards stay consistent.
+  CAT_META: {
+    macro:    { icon: "🌐", zh: "宏观" },
+    news:     { icon: "📰", zh: "自选新闻" },
+    earnings: { icon: "📅", zh: "财报" },
+    signal:   { icon: "📈", zh: "技术信号" },
+    crypto:   { icon: "₿",  zh: "加密" },
+    other:    { icon: "▫️", zh: "其它" },
+  },
+  TREND_META: {
+    bullish: { icon: "🟢", zh: "看多", cls: "bullish" },
+    bearish: { icon: "🔴", zh: "看空", cls: "bearish" },
+    neutral: { icon: "⚪", zh: "中性", cls: "neutral" },
+  },
 
   init() {
     this.listEl = document.getElementById("opps-list");
     this.statusEl = document.getElementById("opps-status");
+    this.kpiEl = document.getElementById("opps-kpi");
     this.navBadgeEl = document.getElementById("opps-nav-badge");
 
     document.getElementById("opps-refresh").addEventListener("click", () => this.refresh());
 
-    document.querySelectorAll("[data-opps-sev]").forEach(b => {
-      b.addEventListener("click", () => {
-        document.querySelectorAll("[data-opps-sev]").forEach(x => x.classList.remove("active"));
-        b.classList.add("active");
-        this.filterSev = b.dataset.oppsSev;
-        this.render();
+    const bindFilter = (attr, key) => {
+      document.querySelectorAll(`[data-${attr}]`).forEach(b => {
+        b.addEventListener("click", () => {
+          document.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.remove("active"));
+          b.classList.add("active");
+          this[key] = b.dataset[attr.replace(/-./g, m => m[1].toUpperCase())];
+          this.render();
+        });
       });
-    });
-    document.querySelectorAll("[data-opps-inst]").forEach(b => {
-      b.addEventListener("click", () => {
-        document.querySelectorAll("[data-opps-inst]").forEach(x => x.classList.remove("active"));
-        b.classList.add("active");
-        this.filterInst = b.dataset.oppsInst;
-        this.render();
-      });
-    });
+    };
+    bindFilter("opps-sev",   "filterSev");
+    bindFilter("opps-cat",   "filterCat");
+    bindFilter("opps-trend", "filterTrend");
 
     this.refresh();
     this._timer = setInterval(() => this.refresh(), this.pollInterval);
@@ -2921,42 +2936,97 @@ const Opportunities = {
     }
   },
 
+  // Backward-compatible category derivation: prefer backend `category` if
+  // present (v2.5+ detectors), else infer from the legacy `type` string.
+  _categoryOf(opp) {
+    if (opp.category) return opp.category;
+    const ty = (opp.type || "").toLowerCase();
+    if (ty.startsWith("macro_")) return "macro";
+    if (ty.includes("earnings")) return "earnings";
+    if (ty.includes("news"))     return "news";
+    if (ty.includes("crypto") || ty === "btc_wick" || ty === "market_pulse") return "crypto";
+    if (ty.includes("rsi") || ty.includes("cross") || ty.includes("momentum")) return "signal";
+    return "other";
+  },
+
+  _trendOf(opp) {
+    return opp.trend || "neutral";
+  },
+
+  renderKpi() {
+    if (!this.kpiEl) return;
+    const counts = { macro: 0, news: 0, earnings: 0, signal: 0, crypto: 0 };
+    this.cache.forEach(o => {
+      const c = this._categoryOf(o);
+      if (counts[c] != null) counts[c]++;
+    });
+    const cells = Object.entries(counts).map(([cat, n]) => {
+      const m = this.CAT_META[cat] || this.CAT_META.other;
+      return `<div class="opps-kpi-cell ${n ? "" : "empty"}" data-go-cat="${cat}">
+        <div class="num">${n}</div>
+        <div class="lbl">${m.icon} ${m.zh}</div>
+      </div>`;
+    }).join("");
+    this.kpiEl.innerHTML = cells;
+    this.kpiEl.querySelectorAll("[data-go-cat]").forEach(el => {
+      el.addEventListener("click", () => {
+        const cat = el.dataset.goCat;
+        document.querySelectorAll("[data-opps-cat]").forEach(b => {
+          b.classList.toggle("active", b.dataset.oppsCat === cat);
+        });
+        this.filterCat = cat;
+        this.render();
+      });
+    });
+  },
+
   render() {
+    this.renderKpi();
     let filtered = this.cache;
-    if (this.filterSev !== "all") filtered = filtered.filter(o => o.severity === this.filterSev);
-    if (this.filterInst !== "all") filtered = filtered.filter(o => this.inferInstrument(o) === this.filterInst);
+    if (this.filterSev   !== "all") filtered = filtered.filter(o => o.severity === this.filterSev);
+    if (this.filterCat   !== "all") filtered = filtered.filter(o => this._categoryOf(o) === this.filterCat);
+    if (this.filterTrend !== "all") filtered = filtered.filter(o => this._trendOf(o) === this.filterTrend);
     if (!filtered.length) {
       this.listEl.innerHTML = `<div class="muted" style="padding:32px; text-align:center;">该过滤条件下暂无机会。</div>`;
       return;
     }
     const sevEmoji = { critical: "🔴", high: "🟠", watch: "🟡", info: "⚪" };
-    const instEmoji = { stock: "📈", etf: "🧺", crypto: "₿", commodity: "🛢", forex: "💱", macro: "🌐" };
     const stratNameById = (id) => (typeof STRATEGIES !== "undefined" && STRATEGIES.find(s => s.id === id)?.name) || id;
 
     this.listEl.innerHTML = filtered.map(o => {
       const ts = new Date(o.created_at);
       const ago = (Date.now() - ts.getTime()) / 60000;
       const agoStr = ago < 1 ? "刚刚" : ago < 60  ? `${Math.round(ago)}m 前` : `${Math.round(ago/60)}h 前`;
-      const isFav = Favorites.isFavorited("opportunity", o.id);
-      const inst = this.inferInstrument(o);
+      const isFav = (typeof Favorites !== "undefined") && Favorites.isFavorited("opportunity", o.id);
+      const cat = this._categoryOf(o);
+      const catMeta = this.CAT_META[cat] || this.CAT_META.other;
+      const trend = this._trendOf(o);
+      const trendMeta = this.TREND_META[trend] || this.TREND_META.neutral;
+      const urlBtn = o.url ? `<a class="opp-link" href="${escapeHtml(o.url)}" target="_blank" rel="noopener">来源 ↗</a>` : "";
       return `
-        <div class="opp-card severity-${o.severity}">
+        <div class="opp-card severity-${o.severity} cat-${cat} trend-${trendMeta.cls}">
           <div class="severity"></div>
           <div class="info">
             <div class="row1">
-              <span title="重要度: ${o.severity}">${sevEmoji[o.severity] || "⚪"}</span>
+              <span class="cat-badge" title="类别">${catMeta.icon} ${catMeta.zh}</span>
+              <span class="trend-pill ${trendMeta.cls}" title="趋势判断">${trendMeta.icon} ${trendMeta.zh}</span>
+              <span class="sev-pill" title="重要度: ${o.severity}">${sevEmoji[o.severity] || "⚪"} ${o.severity}</span>
               ${o.ticker ? `<span class="ticker">${escapeHtml(o.ticker)}</span>` : ""}
-              <span class="inst-badge" title="品种: ${inst}">${instEmoji[inst] || ""} ${inst}</span>
-              <span class="type">${escapeHtml(o.type)}</span>
-              <span class="ts">${agoStr} · ${ts.toLocaleString()}</span>
+              <span class="ts">${agoStr}</span>
             </div>
             <div class="headline">${escapeHtml(o.headline)}</div>
             ${o.body ? `<div class="body">${escapeHtml(o.body)}</div>` : ""}
+            ${o.strategy_note ? `
+              <div class="strategy-note">
+                <span class="muted" style="font-size:11px;">💡 策略建议：</span>
+                <span>${escapeHtml(o.strategy_note)}</span>
+              </div>` : ""}
             ${(o.suggested_strategies && o.suggested_strategies.length) ? `
               <div class="strats">
-                <span class="muted" style="font-size:11px;">建议策略:</span>
+                <span class="muted" style="font-size:11px;">推荐策略:</span>
                 ${o.suggested_strategies.map(sid => `<span class="strat" data-strategy-id="${sid}">${escapeHtml(stratNameById(sid))}</span>`).join("")}
               </div>` : ""}
+            ${urlBtn ? `<div class="opp-link-row">${urlBtn}</div>` : ""}
           </div>
           <div class="actions">
             <button class="star ${isFav ? "on" : ""}" data-opp-fav="${o.id}" title="收藏">${isFav ? "★" : "☆"}</button>
