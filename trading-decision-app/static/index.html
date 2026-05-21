@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TradingForge · 智策 · 多智能体投研工作台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/styles.css?v=20260522d">
+<link rel="stylesheet" href="/styles.css?v=20260523a">
 </head>
 <body>
 
@@ -504,10 +504,22 @@
       </div>
     </div>
 
+    <!-- ─── CORE COMMENTARY (核心结论与解读) ─── -->
+    <div class="fund2-commentary-shell" id="fund2-commentary-shell">
+      <div class="fund2-section-label">
+        <span class="fund2-section-num">02</span>
+        <span class="fund2-section-name">核心结论与解读 · INSIGHTS</span>
+        <span class="fund2-section-hint" id="fund2-commentary-hint">基于本板块综合分自动生成 · 切换板块即刻更新</span>
+      </div>
+      <div class="fund2-commentary" id="fund2-commentary">
+        <div class="fund2-skel">加载中…</div>
+      </div>
+    </div>
+
     <!-- ─── SECTOR DEEP-DIVE ─── -->
     <div class="fund2-deep" id="fund2-deep">
       <div class="fund2-section-label">
-        <span class="fund2-section-num">02</span>
+        <span class="fund2-section-num">03</span>
         <span class="fund2-section-name">板块详情 · DEEP DIVE</span>
         <span class="fund2-section-hint" id="fund2-deep-hint">—</span>
       </div>
@@ -540,10 +552,42 @@
       </div>
     </div>
 
+    <!-- ─── VISUALIZATIONS (子板块排名 + Fwd PE × EPS YoY scatter) ─── -->
+    <div class="fund2-viz-shell">
+      <div class="fund2-section-label">
+        <span class="fund2-section-num">04</span>
+        <span class="fund2-section-name">可视化 · CHARTS</span>
+        <span class="fund2-section-hint">子板块横向排名 + 估值×增速分布</span>
+      </div>
+      <div class="fund2-viz-grid">
+        <!-- LEFT: sub-sector median-score ranking bar chart -->
+        <div class="fund2-viz-card">
+          <div class="fund2-viz-head">
+            <div class="fund2-viz-title">子板块评分排名</div>
+            <div class="fund2-viz-sub muted">按中位综合分降序 · 条形长度=分数</div>
+          </div>
+          <div class="fund2-viz-canvas-wrap">
+            <canvas id="fund2-subsec-canvas"></canvas>
+          </div>
+        </div>
+
+        <!-- RIGHT: Fwd PE × EPS YoY scatter -->
+        <div class="fund2-viz-card">
+          <div class="fund2-viz-head">
+            <div class="fund2-viz-title">Fwd PE × EPS YoY 散点图</div>
+            <div class="fund2-viz-sub muted">x = Fwd PE · y = EPS YoY% · 颜色 = 综合分等级</div>
+          </div>
+          <div class="fund2-viz-canvas-wrap">
+            <canvas id="fund2-scatter-canvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ─── TOP / BOTTOM PICKS ─── -->
     <div class="fund2-picks-shell">
       <div class="fund2-section-label">
-        <span class="fund2-section-num">03</span>
+        <span class="fund2-section-num">05</span>
         <span class="fund2-section-name">最强 / 最弱 · PICKS</span>
         <span class="fund2-section-hint">每张卡都拆解为 6 维度子分，强/弱项一目了然</span>
       </div>
@@ -570,12 +614,15 @@
     <!-- ─── FULL TABLE ─── -->
     <div class="fund2-table-shell">
       <div class="fund2-section-label">
-        <span class="fund2-section-num">04</span>
+        <span class="fund2-section-num">06</span>
         <span class="fund2-section-name">全量评分表 · LEDGER</span>
         <span class="fund2-section-hint">点击行展开 6 维度评分构成 · 点击表头排序</span>
       </div>
       <div class="fund2-table-toolbar">
-        <input id="fund2-search" placeholder="🔍 搜索代码 / 公司名 / 行业…" />
+        <input id="fund2-search" placeholder="🔍 搜索代码 / 公司名 / 子板块…" />
+        <select id="fund2-subsec-filter">
+          <option value="">全部子板块</option>
+        </select>
         <select id="fund2-class-filter">
           <option value="">全部分级</option>
           <option value="good">仅优秀 ≥70</option>
@@ -592,7 +639,9 @@
               <th class="fund2-th-rank" data-sort="rank" data-type="num">#</th>
               <th data-sort="ticker" data-type="text">代码</th>
               <th data-sort="name" data-type="text">公司</th>
+              <th data-sort="sub_sector" data-type="text">子板块</th>
               <th class="fund2-th-score" data-sort="score" data-type="num">综合分 ▼</th>
+              <th data-sort="price" data-type="num">现价</th>
               <th data-sort="pe" data-type="num">PE</th>
               <th data-sort="pe_fwd" data-type="num">Fwd PE</th>
               <th data-sort="peg_av" data-type="num">PEG (AV)</th>
@@ -624,8 +673,10 @@
         </div>
         <div class="fund2-foot-col">
           <div class="fund2-foot-head">数据源</div>
-          <p>Alpha Vantage <code>OVERVIEW</code>，30 分钟 TTL 缓存。
-            指标含 PE / Fwd PE / PEG (AV) / PEG (Fwd, 自算) / Quarterly Rev YoY / Quarterly EPS YoY。
+          <p>三源并行：<code>Alpha Vantage OVERVIEW</code>（基本面）+
+            <code>Polygon.io</code>（现价 + 日涨跌）+
+            <code>Finnhub /stock/metric</code>（增速口径互补）。
+            30 分钟 TTL 缓存；点击 <strong>↻ 刷新全部</strong> 可强制绕过缓存。
             <strong>仅供研究，不构成投资建议</strong>。</p>
         </div>
       </div>
@@ -925,6 +976,6 @@
 <script src="/strategies.js"></script>
 <script src="/app.js?v=20260522d"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/fundamentals.js?v=20260522d"></script>
+<script src="/fundamentals.js?v=20260523b"></script>
 </body>
 </html>

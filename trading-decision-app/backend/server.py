@@ -342,29 +342,36 @@ async def fundamentals_index() -> JSONResponse:
 
 
 @app.get("/api/fundamentals/_overview")
-async def fundamentals_overview() -> JSONResponse:
+async def fundamentals_overview(force: bool = False) -> JSONResponse:
     """Cross-sector macro snapshot for the top strip — all 5 sectors at once.
 
     Heavy on first call (parallel fetch of ~100 unique tickers), near-
     instant once the per-ticker AV cache warms (30-min TTL).
+
+    `?force=true` bypasses the per-ticker cache so a manual refresh always
+    pulls fresh data from Alpha Vantage / Polygon / Finnhub.
     """
     from fundamentals import build_overview
-    payload = await asyncio.to_thread(build_overview)
+    payload = await asyncio.to_thread(build_overview, force)
     return JSONResponse(payload)
 
 
 @app.get("/api/fundamentals/{sector_id}")
-async def fundamentals_sector(sector_id: str) -> JSONResponse:
-    """Full payload for one sector: scored rows, KPIs, top/bottom picks.
+async def fundamentals_sector(sector_id: str, force: bool = False) -> JSONResponse:
+    """Full payload for one sector: scored rows, KPIs, top/bottom picks,
+    sub-sector aggregates, and `核心结论与解读` commentary.
 
-    Fetches Alpha Vantage OVERVIEW for every ticker (30-min TTL cache),
-    then computes a sector-relative percentile composite score using the
-    sector-specific weight matrix.
+    Fetches Alpha Vantage OVERVIEW + Polygon prev-day + Finnhub metric
+    for every ticker (30-min TTL cache), then computes a sector-relative
+    percentile composite score using the sector-specific weight matrix.
+
+    `?force=true` bypasses the per-ticker cache so a manual refresh always
+    pulls live data.
     """
     from fundamentals import build_sector_payload, SECTORS
     if sector_id not in SECTORS:
         return JSONResponse({"error": f"unknown sector: {sector_id}"}, status_code=404)
-    payload = await asyncio.to_thread(build_sector_payload, sector_id)
+    payload = await asyncio.to_thread(build_sector_payload, sector_id, force)
     return JSONResponse(payload)
 
 

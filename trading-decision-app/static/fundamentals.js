@@ -36,7 +36,13 @@
   let overviewData = null;
   let initialised = false;
   let distChart = null;
-  let tableState = { sortKey: "score", sortDir: "desc", text: "", classFilter: "", expanded: new Set() };
+  let subsecChart = null;
+  let scatterChart = null;
+  let tableState = {
+    sortKey: "score", sortDir: "desc",
+    text: "", classFilter: "", subsecFilter: "",
+    expanded: new Set(),
+  };
 
   // ─────────── format helpers ───────────
   const isNum = v => v !== null && v !== undefined && !isNaN(Number(v));
@@ -78,7 +84,8 @@
   // ─────────── network ───────────
   async function fetchOverview(force) {
     if (!force && overviewData) return overviewData;
-    const r = await fetch(API_BASE + "/api/fundamentals/_overview");
+    const url = API_BASE + "/api/fundamentals/_overview" + (force ? "?force=true" : "");
+    const r = await fetch(url);
     if (!r.ok) throw new Error("overview http " + r.status);
     overviewData = await r.json();
     return overviewData;
@@ -86,7 +93,9 @@
   async function fetchSector(id, opts) {
     opts = opts || {};
     if (!opts.force && cache[id]) return cache[id];
-    const r = await fetch(API_BASE + "/api/fundamentals/" + encodeURIComponent(id));
+    const url = API_BASE + "/api/fundamentals/" + encodeURIComponent(id)
+      + (opts.force ? "?force=true" : "");
+    const r = await fetch(url);
     if (!r.ok) throw new Error("sector " + id + " http " + r.status);
     const j = await r.json();
     cache[id] = j;
@@ -351,6 +360,255 @@
     });
   }
 
+  // ─────────── COMMENTARY (核心结论与解读) ───────────
+  function renderCommentary(payload) {
+    const wrap = document.getElementById("fund2-commentary");
+    const hint = document.getElementById("fund2-commentary-hint");
+    if (!wrap) return;
+    const items = payload.commentary || [];
+    wrap.innerHTML = "";
+    if (items.length === 0) {
+      wrap.innerHTML = '<div class="muted" style="padding:18px;">暂无解读。请刷新或稍后重试。</div>';
+      return;
+    }
+    items.forEach((p, idx) => {
+      const card = el("div", { class: "fund2-com-card" });
+      card.appendChild(el("div", { class: "fund2-com-num" }, "0" + (idx + 1)));
+      const body = el("div", { class: "fund2-com-body" });
+      body.appendChild(el("div", { class: "fund2-com-title" }, p.title || ""));
+      const para = el("p", { class: "fund2-com-text", html: p.body || "" });
+      body.appendChild(para);
+      card.appendChild(body);
+      wrap.appendChild(card);
+    });
+    if (hint) hint.textContent = (payload.sector && payload.sector.name)
+      ? `当前板块：${payload.sector.name}`
+      : "—";
+  }
+
+  // ─────────── SUB-SECTOR RANKING (horizontal bars) ───────────
+  function renderSubsecChart(payload) {
+    const canvas = document.getElementById("fund2-subsec-canvas");
+    if (!canvas || !window.Chart) return;
+    const subs = (payload.sub_sector_stats || []).slice();
+    // Sort by median desc, push null-median sub-sectors to the end.
+    subs.sort((a, b) => {
+      const av = isNum(a.median_score) ? a.median_score : -1;
+      const bv = isNum(b.median_score) ? b.median_score : -1;
+      return bv - av;
+    });
+
+    const styles = getComputedStyle(document.documentElement);
+    const mutedCol = styles.getPropertyValue("--text-muted").trim() || "#807a72";
+    const borderCol = styles.getPropertyValue("--border").trim() || "#e5dfd0";
+    const goodCol = styles.getPropertyValue("--success").trim() || "#2d6b3e";
+    const midCol  = styles.getPropertyValue("--accent-3").trim() || "#b8860b";
+    const highCol = styles.getPropertyValue("--danger").trim() || "#a83232";
+    const naCol   = styles.getPropertyValue("--border-strong").trim() || "#c8c0ad";
+
+    const labels = subs.map(s => s.name);
+    const data = subs.map(s => isNum(s.median_score) ? s.median_score : 0);
+    const colors = subs.map(s => {
+      if (!isNum(s.median_score)) return naCol;
+      if (s.median_score >= 70) return goodCol;
+      if (s.median_score >= 45) return midCol;
+      return highCol;
+    });
+
+    if (subsecChart) subsecChart.destroy();
+    subsecChart = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: "子板块中位综合分",
+          data,
+          backgroundColor: colors.map(c => c + "cc"),
+          borderColor: colors,
+          borderWidth: 1,
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 300 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const s = subs[ctx.dataIndex];
+                return `中位分 ${isNum(s.median_score) ? s.median_score.toFixed(1) : "—"} · ` +
+                  `已评分 ${s.with_score}/${s.ticker_count} · ` +
+                  `✓${s.good} ·${s.mid} ✗${s.high}`;
+              },
+              title: ctx => subs[ctx[0].dataIndex].name,
+            },
+          },
+        },
+        scales: {
+          x: {
+            min: 0, max: 100,
+            grid: { color: borderCol, drawBorder: false },
+            ticks: { color: mutedCol, font: { size: 11 }, stepSize: 25 },
+            title: { display: true, text: "中位综合分 (0-100)", color: mutedCol, font: { size: 11 } },
+          },
+          y: {
+            grid: { display: false },
+            ticks: { color: mutedCol, font: { size: 12 } },
+          },
+        },
+      },
+      plugins: [{
+        id: "subsec-thresholds",
+        afterDraw(chart) {
+          const { ctx, chartArea, scales } = chart;
+          if (!chartArea) return;
+          [45, 70].forEach((thr, idx) => {
+            const x = scales.x.getPixelForValue(thr);
+            ctx.save();
+            ctx.strokeStyle = idx === 0 ? midCol : goodCol;
+            ctx.globalAlpha = 0.35;
+            ctx.setLineDash([4, 3]);
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom);
+            ctx.stroke();
+            ctx.restore();
+          });
+        },
+      }],
+    });
+  }
+
+  // ─────────── Fwd PE × EPS YoY SCATTER ───────────
+  function renderScatterChart(payload) {
+    const canvas = document.getElementById("fund2-scatter-canvas");
+    if (!canvas || !window.Chart) return;
+    const rows = (payload.rows || []).filter(r =>
+      isNum(r.pe_fwd) && isNum(r.eps_growth)
+    );
+
+    const styles = getComputedStyle(document.documentElement);
+    const mutedCol = styles.getPropertyValue("--text-muted").trim() || "#807a72";
+    const borderCol = styles.getPropertyValue("--border").trim() || "#e5dfd0";
+    const goodCol = styles.getPropertyValue("--success").trim() || "#2d6b3e";
+    const midCol  = styles.getPropertyValue("--accent-3").trim() || "#b8860b";
+    const highCol = styles.getPropertyValue("--danger").trim() || "#a83232";
+
+    // Cap axes so outliers don't compress the meaningful region.
+    // Most stocks live in PE 0-80, EPS YoY -50% to +150%. Truncate further
+    // outliers visually (they cluster at the edge); hover tooltip still
+    // shows the real value, and they get a 🚀 ⬆ marker so the user knows.
+    const peCap = 120;
+    const epsCap = 300;
+    const epsFloor = -100;
+    const clampX = v => Math.min(peCap, Math.max(0, v));
+    const clampY = v => Math.min(epsCap, Math.max(epsFloor, v));
+
+    const ds = (cls, color) => ({
+      label: cls === "good" ? "优秀 ≥70" : cls === "mid" ? "中性 45-70" : "弱势 <45",
+      data: rows
+        .filter(r => r.score_class === cls)
+        .map(r => ({
+          x: clampX(r.pe_fwd),
+          y: clampY(r.eps_growth),
+          // Keep original values on the datapoint so tooltip + outlier
+          // detection can report the real numbers.
+          xReal: r.pe_fwd,
+          yReal: r.eps_growth,
+          clamped: (r.pe_fwd > peCap) || (r.eps_growth > epsCap) || (r.eps_growth < epsFloor),
+          ticker: r.ticker, name: r.name,
+          score: r.score, sub_sector: r.sub_sector,
+        })),
+      backgroundColor: color + "cc",
+      borderColor: color,
+      borderWidth: 1,
+      pointRadius: 7, pointHoverRadius: 11,
+    });
+
+    if (scatterChart) scatterChart.destroy();
+    scatterChart = new Chart(canvas, {
+      type: "scatter",
+      data: { datasets: [ds("good", goodCol), ds("mid", midCol), ds("high", highCol)] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 300 },
+        plugins: {
+          legend: { display: true,
+            labels: { color: mutedCol, font: { size: 11 }, boxWidth: 10 } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const r = ctx.raw;
+                const peStr = isNum(r.xReal) ? r.xReal.toFixed(1) : "—";
+                const epsStr = isNum(r.yReal) ? r.yReal.toFixed(1) + "%" : "—";
+                const out = [
+                  `${r.ticker}  ${r.name || ""}`,
+                  `子板块: ${r.sub_sector || "—"}`,
+                  `Fwd PE: ${peStr}  ·  EPS YoY: ${epsStr}`,
+                  `综合分: ${isNum(r.score) ? r.score.toFixed(1) : "—"}`,
+                ];
+                if (r.clamped) out.push("⚠ 该点超出坐标轴范围，已贴边显示");
+                return out;
+              },
+              title: () => "",
+            },
+          },
+        },
+        scales: {
+          x: {
+            min: 0, max: peCap,
+            grid: { color: borderCol, drawBorder: false },
+            ticks: { color: mutedCol, font: { size: 11 } },
+            title: { display: true, text: "Fwd PE (越低越便宜，>" + peCap + " 贴边)",
+                     color: mutedCol, font: { size: 11 } },
+          },
+          y: {
+            min: epsFloor, max: epsCap,
+            grid: { color: borderCol, drawBorder: false },
+            ticks: { color: mutedCol, font: { size: 11 },
+              callback: v => v + "%" },
+            title: { display: true, text: "EPS YoY % (越高越成长，>" + epsCap + "% 贴边)",
+                     color: mutedCol, font: { size: 11 } },
+          },
+        },
+      },
+      plugins: [{
+        id: "scatter-quadrants",
+        afterDraw(chart) {
+          const { ctx, chartArea, scales } = chart;
+          if (!chartArea) return;
+          // Vertical line at PE=20 (commonly "growth vs value" divider)
+          const xLine = scales.x.getPixelForValue(20);
+          // Horizontal line at EPS YoY=20 (commonly "real growth" cutoff)
+          const yLine = scales.y.getPixelForValue(20);
+          ctx.save();
+          ctx.strokeStyle = mutedCol;
+          ctx.globalAlpha = 0.30;
+          ctx.setLineDash([4, 3]);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(xLine, chartArea.top); ctx.lineTo(xLine, chartArea.bottom);
+          ctx.moveTo(chartArea.left, yLine); ctx.lineTo(chartArea.right, yLine);
+          ctx.stroke();
+          ctx.restore();
+          // Quadrant labels
+          ctx.save();
+          ctx.fillStyle = mutedCol;
+          ctx.globalAlpha = 0.55;
+          ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+          ctx.fillText("便宜+成长", chartArea.left + 8, yLine - 6);
+          ctx.fillText("贵+成长",  xLine + 8,         yLine - 6);
+          ctx.fillText("便宜+乏力", chartArea.left + 8, yLine + 14);
+          ctx.fillText("贵+乏力",   xLine + 8,         yLine + 14);
+          ctx.restore();
+        },
+      }],
+    });
+  }
+
   // ─────────── PICK CARDS ───────────
   function pickCard(row, mode) {
     const card = el("div", { class: "fund2-pick fund2-pick--" + mode });
@@ -439,14 +697,17 @@
     const rows = payload.rows || [];
     const q = tableState.text.toLowerCase().trim();
     const cf = tableState.classFilter;
+    const sf = tableState.subsecFilter;
     const filtered = rows.filter(r => {
       const mQ = !q ||
         (r.ticker || "").toLowerCase().includes(q) ||
         (r.name || "").toLowerCase().includes(q) ||
         (r.industry || "").toLowerCase().includes(q) ||
-        (r.sector || "").toLowerCase().includes(q);
+        (r.sector || "").toLowerCase().includes(q) ||
+        (r.sub_sector || "").toLowerCase().includes(q);
       const mC = !cf || r.score_class === cf;
-      return mQ && mC;
+      const mS = !sf || r.sub_sector === sf;
+      return mQ && mC && mS;
     });
     filtered.sort((a, b) => {
       let va = a[tableState.sortKey], vb = b[tableState.sortKey];
@@ -475,6 +736,11 @@
       tr.appendChild(el("td", { class: "fund2-td-rank" }, "#" + r.rank));
       tr.appendChild(el("td", { class: "fund2-td-ticker" }, r.ticker || ""));
       tr.appendChild(el("td", { class: "fund2-td-name muted" }, (r.name || "").slice(0, 28)));
+      // 子板块 cell — chip-style label
+      const subTd = el("td", { class: "fund2-td-subsec" });
+      if (r.sub_sector) subTd.appendChild(el("span", { class: "fund2-subsec-chip" }, r.sub_sector));
+      else subTd.appendChild(el("span", { class: "muted" }, "—"));
+      tr.appendChild(subTd);
 
       const scoreTd = el("td", { class: "fund2-td-score" });
       const scoreBar = el("div", { class: "fund2-td-score-wrap" });
@@ -491,6 +757,21 @@
       scoreTd.appendChild(scoreBar);
       tr.appendChild(scoreTd);
 
+      // Live price + day change %
+      const priceTd = el("td", { class: "fund2-td-price num" });
+      if (isNum(r.price)) {
+        priceTd.appendChild(el("span", { class: "fund2-td-price-val" }, "$" + r.price.toFixed(2)));
+        if (isNum(r.change_pct)) {
+          const cls = r.change_pct >= 0 ? "fund2-chg-pos" : "fund2-chg-neg";
+          const sign = r.change_pct >= 0 ? "+" : "";
+          priceTd.appendChild(el("span", { class: "fund2-td-chg " + cls },
+            " " + sign + r.change_pct.toFixed(1) + "%"));
+        }
+      } else {
+        priceTd.appendChild(el("span", { class: "muted" }, "—"));
+      }
+      tr.appendChild(priceTd);
+
       tr.appendChild(el("td", { class: "num" }, fmt1(r.pe)));
       tr.appendChild(el("td", { class: "num" }, fmt1(r.pe_fwd)));
       tr.appendChild(el("td", { class: "num" }, fmt2(r.peg_av)));
@@ -502,7 +783,7 @@
 
       if (isExp) {
         const exTr = el("tr", { class: "fund2-row-ex" });
-        const exTd = el("td", { class: "fund2-row-ex-td", colspan: "11" });
+        const exTd = el("td", { class: "fund2-row-ex-td", colspan: "13" });
         const grid = el("div", { class: "fund2-ex-grid" });
         grid.appendChild(el("div", { class: "fund2-ex-head" },
           "🔬 6 维度评分构成 · ", el("span", { class: "muted" }, r.ticker || "")));
@@ -564,12 +845,22 @@
     });
     const s = document.getElementById("fund2-search");
     if (s) s.oninput = () => { tableState.text = s.value; applyTable(payload); };
+    // Populate sub-sector dropdown (keep "全部子板块" + payload-derived list)
+    const sf = document.getElementById("fund2-subsec-filter");
+    if (sf) {
+      const subs = (payload.sector && payload.sector.sub_sectors) || [];
+      sf.innerHTML = '<option value="">全部子板块</option>'
+        + subs.map(name => `<option value="${name}">${name}</option>`).join("");
+      sf.value = tableState.subsecFilter || "";
+      sf.onchange = () => { tableState.subsecFilter = sf.value; applyTable(payload); };
+    }
     const cf = document.getElementById("fund2-class-filter");
     if (cf) cf.onchange = () => { tableState.classFilter = cf.value; applyTable(payload); };
   }
 
   // ─────────── sector switch + orchestration ───────────
-  async function selectSector(id) {
+  async function selectSector(id, opts) {
+    opts = opts || {};
     currentSector = id;
     renderMacro();
     const hint = document.getElementById("fund2-deep-hint");
@@ -577,17 +868,27 @@
     const card = document.getElementById("fund2-sector-card");
     if (card) card.innerHTML = '<div class="fund2-skel">加载 ' + id + ' 板块数据…</div>';
     if (hint) hint.textContent = "加载中…";
-    document.getElementById("fund2-top").innerHTML = "";
-    document.getElementById("fund2-bot").innerHTML = "";
-    document.getElementById("fund2-tbody").innerHTML =
-      '<tr><td colspan="11" class="muted" style="text-align:center;padding:32px;">加载中…</td></tr>';
+    const top = document.getElementById("fund2-top");
+    const bot = document.getElementById("fund2-bot");
+    const tbody = document.getElementById("fund2-tbody");
+    const com = document.getElementById("fund2-commentary");
+    if (top) top.innerHTML = "";
+    if (bot) bot.innerHTML = "";
+    if (com) com.innerHTML = '<div class="fund2-skel">加载中…</div>';
+    if (tbody) tbody.innerHTML =
+      '<tr><td colspan="13" class="muted" style="text-align:center;padding:32px;">加载中…</td></tr>';
 
     try {
-      const payload = await fetchSector(id);
+      const payload = await fetchSector(id, opts);
       if (payload && payload.error) throw new Error(payload.error);
+      // reset table state when switching sectors
       tableState.expanded.clear();
+      tableState.subsecFilter = "";
+      renderCommentary(payload);
       renderSectorCard(payload);
       renderDistribution(payload);
+      renderSubsecChart(payload);
+      renderScatterChart(payload);
       renderPicks(payload);
       bindTableEvents(payload);
       applyTable(payload);
@@ -614,7 +915,7 @@
         overviewData = null;
         await fetchOverview(true);
         renderMacro();
-        if (currentSector) await selectSector(currentSector);
+        if (currentSector) await selectSector(currentSector, { force: true });
       } finally {
         refreshBtn.textContent = "↻ 刷新全部";
         refreshBtn.disabled = false;
@@ -622,6 +923,8 @@
     };
 
     try {
+      // First mount: also force the cache to behave like a refresh — the user
+      // wants "每次进入页面或者手动点击刷新时更新最新数据".
       const ov = await fetchOverview();
       currentSector = (ov.sectors && ov.sectors[0] && ov.sectors[0].id) || "ai";
       renderMacro();
@@ -635,10 +938,37 @@
     }
   }
 
+  // Track when the last refresh happened — re-mounting the tab within 60s
+  // reuses the existing payload; outside that window we re-fetch so the
+  // page always shows fresh data when the user comes back.
+  let lastRefreshAt = 0;
+  const REVISIT_TTL_MS = 60 * 1000;
+
+  async function onTabOpen() {
+    if (!initialised) {
+      await init();
+      lastRefreshAt = Date.now();
+      return;
+    }
+    // Re-mount: if it's been more than 60s, refresh quietly.
+    if (Date.now() - lastRefreshAt > REVISIT_TTL_MS) {
+      try {
+        overviewData = null;
+        Object.keys(cache).forEach(k => delete cache[k]);
+        await fetchOverview();
+        renderMacro();
+        if (currentSector) await selectSector(currentSector);
+        lastRefreshAt = Date.now();
+      } catch (e) {
+        console.warn("[fund] silent refresh failed:", e);
+      }
+    }
+  }
+
   function hookTab() {
     const btn = document.querySelector('nav.tabs button[data-tab="fundamentals"]');
     if (!btn) return;
-    btn.addEventListener("click", () => setTimeout(init, 0));
+    btn.addEventListener("click", () => setTimeout(onTabOpen, 0));
   }
 
   if (document.readyState === "loading") {
