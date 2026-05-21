@@ -93,71 +93,150 @@
 <!--  HOMEPAGE                                                   -->
 <!-- ========================================================== -->
 <section class="tab-content active" id="home">
-  <h2>把多智能体投研 × 策略库装进一张工作台</h2>
-  <p>
-    传统的"AI 选股"通常是单次 LLM 问答 — 给一段提示，得一段回答。本系统不一样：
-    它把 <strong>TradingAgents</strong> 的 12 个智能体（4 个分析师、2 个研究员、3 个风险分析师、3 个经理 + 交易员）
-    组合成一条完整的投研流水线，**实时**显示每个 agent 的进度、工具调用、辩论过程，
-    最终给出 5 档评级（Buy / Overweight / Hold / Underweight / Sell）—
-    并自动从 <strong>78 条策略库</strong>挑出 Top-5 可执行方案。
-  </p>
 
-  <h3>四个核心能力</h3>
-  <div class="framework-grid">
-    <div class="framework-card">
-      <div class="icon">🧠</div>
-      <h4>① TradingAgents</h4>
-      <div class="muted">多智能体投研流程</div>
-      <ul>
-        <li>4 个分析师（市场 / 情绪 / 新闻 / 基本面）</li>
-        <li>2 个研究员对抗辩论（牛 vs 熊）</li>
-        <li>3 方风险讨论（激进 / 中立 / 保守）</li>
-        <li>研究经理 + 投资组合经理裁决</li>
-      </ul>
+  <!-- ========= HERO ========= -->
+  <div class="home-hero">
+    <span class="home-hero-tag">TradingForge · v2.5</span>
+    <h1 class="home-slogan">让 12 个 AI 智能体替你交叉论证<br>每一个交易决策</h1>
+    <p class="home-tagline">
+      多智能体投研工作台 — 把分析师 / 研究员 / 风险讨论 / 投资组合经理串成一条流水线，
+      端到端给出 5 档评级、短·中·长三档目标价，并从 78 条策略库里挑出 Top-5 可执行方案。
+      自选标的、基本面看板、24h 机会监控、综合报告一站搞定。
+    </p>
+    <div class="home-hero-ctas">
+      <button class="btn-hero primary" data-go="decisions">▶ 跑一次决策</button>
+      <button class="btn-hero ghost" data-go="opportunities">⚡ 24h 机会</button>
+      <button class="btn-hero ghost" data-go="watchlist">⭐ 自选标的</button>
     </div>
-    <div class="framework-card">
-      <div class="icon">📚</div>
-      <h4>② 78 条策略库</h4>
-      <div class="muted">7 大类别可执行方案</div>
-      <ul>
-        <li>建仓 · 仓位管理 · 对冲</li>
-        <li>收益增强 · 方向性</li>
-        <li>套利 · 退出</li>
-        <li>每条策略含参数、好处、代价、示例</li>
-      </ul>
-    </div>
-    <div class="framework-card">
-      <div class="icon">🎯</div>
-      <h4>③ 智能匹配</h4>
-      <div class="muted">决策 → 策略</div>
-      <ul>
-        <li>解析评级、观点、波动、周期</li>
-        <li>按品种 + 风险偏好打分排序</li>
-        <li>给出 Top-5 可执行策略与原因</li>
-      </ul>
-    </div>
-    <div class="framework-card">
-      <div class="icon">📡</div>
-      <h4>④ 实时可视化</h4>
-      <div class="muted">SSE 流式更新</div>
-      <ul>
-        <li>12 个智能体进度看板</li>
-        <li>工具调用与日志流</li>
-        <li>报告 / 辩论 / 决策卡片</li>
-        <li>多窗口并行 · 历史决策可回溯</li>
-      </ul>
+    <div class="home-hero-kpi">
+      <div class="kpi"><div class="num">12</div><div class="lbl">AI 智能体</div></div>
+      <div class="kpi"><div class="num" id="stat-total-hero">78</div><div class="lbl">策略库</div></div>
+      <div class="kpi"><div class="num">7</div><div class="lbl">LLM 提供商</div></div>
+      <div class="kpi"><div class="num">8</div><div class="lbl">功能模块</div></div>
+      <div class="kpi"><div class="num">3</div><div class="lbl">时间维度</div></div>
     </div>
   </div>
 
-  <h3>怎么用</h3>
-  <ol class="usage-steps">
-    <li><strong>去 "AI 智能决策" Tab</strong> — 输入股票代码、日期、LLM、研究深度等参数。</li>
-    <li><strong>点击"启动"</strong>，每次启动都会开一个新窗口；多个窗口可以同时运行不同标的。</li>
-    <li><strong>实时观察</strong>左侧侧边栏切换不同章节：分析师报告 / 辩论 / 风险讨论 / 最终决策。</li>
-    <li><strong>完成后保存</strong>到历史记录；点击左侧"📜 历史决策"可以随时回看、下载报告。</li>
-  </ol>
+  <!-- ========= 8 MODULES ========= -->
+  <div class="home-section-title">
+    <h3>八大功能模块</h3>
+    <span class="home-section-sub">每个模块都有独立 URL，可直接收藏或分享</span>
+  </div>
+  <div class="home-modules">
 
-  <h3>支持的 LLM 提供商</h3>
+    <a class="home-mod" data-go="decisions">
+      <div class="home-mod-icon">🎯</div>
+      <h4>决策</h4>
+      <div class="home-mod-url">/decisions</div>
+      <p>启动 / 监控 / 回看 AI 决策。每次跑出 5 档评级、Top-5 策略、短中长目标价 + 执行计划。</p>
+      <span class="home-mod-link">进入决策 →</span>
+    </a>
+
+    <a class="home-mod" data-go="watchlist">
+      <div class="home-mod-icon">⭐</div>
+      <h4>自选</h4>
+      <div class="home-mod-url">/watchlist</div>
+      <p>跨设备自选清单，自动拉行情；点开任一标的看历史决策与"综合报告"全息合并视图。</p>
+      <span class="home-mod-link">查看自选 →</span>
+    </a>
+
+    <a class="home-mod" data-go="fundamentals">
+      <div class="home-mod-icon">📊</div>
+      <h4>基本面看板</h4>
+      <div class="home-mod-url">/fundamentals</div>
+      <p>20 项财务指标 + 多源数据 + 行业子板块对比，给出量化打分与"核心结论"。</p>
+      <span class="home-mod-link">打开看板 →</span>
+    </a>
+
+    <a class="home-mod" data-go="opportunities">
+      <div class="home-mod-icon">⚡</div>
+      <h4>24h 机会</h4>
+      <div class="home-mod-url">/opportunities</div>
+      <p>宏观参数 + 新闻流 + 自选标的资讯监控；每条机会给"趋势判断 + 策略建议"。</p>
+      <span class="home-mod-link">看机会 →</span>
+    </a>
+
+    <a class="home-mod" data-go="library">
+      <div class="home-mod-icon">📚</div>
+      <h4>策略库</h4>
+      <div class="home-mod-url">/library</div>
+      <p>78 条可执行策略 · 7 大类 · 按品种 / 风险 / 周期筛选 · 每条含参数、好处、代价、示例。</p>
+      <span class="home-mod-link">浏览策略 →</span>
+    </a>
+
+    <a class="home-mod" data-go="favorites">
+      <div class="home-mod-icon">⭐</div>
+      <h4>我的收藏</h4>
+      <div class="home-mod-url">/favorites</div>
+      <p>把跑得好的决策、看上眼的策略、综合报告统一收进一个面板，跨会话保留。</p>
+      <span class="home-mod-link">查看收藏 →</span>
+    </a>
+
+    <a class="home-mod" data-go="profile">
+      <div class="home-mod-icon">👤</div>
+      <h4>个人中心</h4>
+      <div class="home-mod-url">/profile</div>
+      <p>API Key 状态、默认模型、研究深度、风险偏好、使用统计与每月 token 消耗。</p>
+      <span class="home-mod-link">个人中心 →</span>
+    </a>
+
+    <a class="home-mod" data-go="home" id="home-mod-disclaimer">
+      <div class="home-mod-icon">⚠️</div>
+      <h4>风险与免责</h4>
+      <div class="home-mod-url">/#disclaimer</div>
+      <p>本工具只是辅助研究，不是投顾建议。点开下方"风险提示"完整阅读注意事项。</p>
+      <span class="home-mod-link">阅读条款 →</span>
+    </a>
+
+  </div>
+
+  <!-- ========= QUICK START ========= -->
+  <div class="home-section-title">
+    <h3>四步用起来</h3>
+    <span class="home-section-sub">从零到一份完整的多周期决策大约 5 分钟</span>
+  </div>
+  <div class="home-steps">
+    <div class="home-step">
+      <span class="step-num">1</span>
+      <h4>添加自选</h4>
+      <p>到 ⭐ 自选页加几个想盯的标的（股票 / ETF / 加密皆可）。</p>
+    </div>
+    <div class="home-step">
+      <span class="step-num">2</span>
+      <h4>启动决策</h4>
+      <p>在 🎯 决策页选标的、选模型、选研究深度，按 ▶ 启动新决策。</p>
+    </div>
+    <div class="home-step">
+      <span class="step-num">3</span>
+      <h4>追加分析</h4>
+      <p>看完后到 📊 基本面看板对照量化分；到 ⚡ 24h 机会看实时催化剂。</p>
+    </div>
+    <div class="home-step">
+      <span class="step-num">4</span>
+      <h4>合成报告</h4>
+      <p>跑过几次后，在自选页对单标的生成"综合报告"——多次决策 + 看板的最终视图。</p>
+    </div>
+  </div>
+
+  <!-- ========= DATA SOURCES ========= -->
+  <div class="home-section-title">
+    <h3>数据 & 信号源</h3>
+    <span class="home-section-sub">默认全免费层，配置 Key 即升级到付费层</span>
+  </div>
+  <div class="home-sources">
+    <span class="home-source-pill"><span class="dot"></span>yfinance · 行情 · 公司基本面</span>
+    <span class="home-source-pill"><span class="dot"></span>Finnhub · 新闻 · 财报日历</span>
+    <span class="home-source-pill"><span class="dot"></span>CoinGecko / Binance · 加密行情</span>
+    <span class="home-source-pill"><span class="dot"></span>Reddit /r/wallstreetbets · 社媒情绪</span>
+    <span class="home-source-pill"><span class="dot"></span>FRED · 宏观指标</span>
+    <span class="home-source-pill"><span class="dot"></span>Polygon / Alpha Vantage · 期权 IV（可选）</span>
+  </div>
+
+  <!-- ========= LLM PROVIDER TABLE (kept) ========= -->
+  <div class="home-section-title">
+    <h3>支持的 LLM 提供商</h3>
+    <span class="home-section-sub">配置至少一个 API Key 即可启用 LIVE 模式</span>
+  </div>
   <table class="matrix">
     <thead><tr><th>提供商</th><th>深思 / 轻思模型示例</th><th>API Key 环境变量</th></tr></thead>
     <tbody>
@@ -171,51 +250,44 @@
     </tbody>
   </table>
 
-  <h3>容量</h3>
-  <div class="stats">
-    <div class="stat"><div class="num" id="stat-total">78</div><div class="label">策略总数</div></div>
-    <div class="stat"><div class="num">12</div><div class="label">智能体</div></div>
-    <div class="stat"><div class="num">7</div><div class="label">LLM 提供商</div></div>
-    <div class="stat"><div class="num">5</div><div class="label">评级档位</div></div>
-  </div>
+  <!-- ========= COLLAPSED RISK DISCLAIMER ========= -->
+  <details class="home-risk" id="disclaimer">
+    <summary>⚠️ 风险提示与免责声明（展开阅读）</summary>
+    <div class="risk-section">
+      <h3>① 通用风险</h3>
+      <ul>
+        <li>所有交易策略都<strong>无法保证盈利</strong>。历史回测和理论模型不代表未来表现。</li>
+        <li>市场可能在任意时刻发生与你预期相反的剧烈变动（黑天鹅、政策、流动性枯竭）。</li>
+        <li>"低风险"策略只是相对概念，极端环境下可能出现远超历史的回撤。</li>
+      </ul>
 
-  <!-- ============= RISK DISCLAIMER (merged from old "风险提示") ============ -->
-  <h2 style="margin-top:48px;">风险提示与免责声明</h2>
+      <h3>② AI 决策的局限</h3>
+      <ul>
+        <li>多智能体辩论可以降低单一视角偏差，但<strong>不能消除模型的训练数据偏差</strong>。</li>
+        <li>LLM 可能生成看似合理但事实错误的"幻觉"，请将其输出作为参考而非结论。</li>
+        <li>日期 / 行情 / 财报数据来自公开 API，可能滞后或缺失。</li>
+      </ul>
 
-  <div class="risk-section">
-    <h3>① 通用风险</h3>
-    <ul>
-      <li>所有交易策略都<strong>无法保证盈利</strong>。历史回测和理论模型不代表未来表现。</li>
-      <li>市场可能在任意时刻发生与你预期相反的剧烈变动（黑天鹅、政策、流动性枯竭）。</li>
-      <li>"低风险"策略只是相对概念，极端环境下可能出现远超历史的回撤。</li>
-    </ul>
+      <h3>③ 杠杆与衍生品风险</h3>
+      <ul>
+        <li>期货、永续合约、保证金交易可能<strong>损失超过本金</strong>，存在爆仓与穿仓风险。</li>
+        <li>期权买方可能<strong>亏损全部权利金</strong>；期权卖方在裸卖时面临理论上无限亏损。</li>
+      </ul>
 
-    <h3>② AI 决策的局限</h3>
-    <ul>
-      <li>多智能体辩论可以降低单一视角偏差，但<strong>不能消除模型的训练数据偏差</strong>。</li>
-      <li>LLM 可能生成看似合理但事实错误的"幻觉"，请将其输出作为参考而非结论。</li>
-      <li>日期 / 行情 / 财报数据来自公开 API，可能滞后或缺失。</li>
-    </ul>
+      <h3>④ 心理与执行风险</h3>
+      <ul>
+        <li>策略本身是中性的，<strong>真正的风险在执行人身上</strong>：不止损、加杠杆、报复性交易。</li>
+        <li>同一个策略不同人执行，结果可能南辕北辙。请先用小仓位验证规则与心理。</li>
+      </ul>
 
-    <h3>③ 杠杆与衍生品风险</h3>
-    <ul>
-      <li>期货、永续合约、保证金交易可能<strong>损失超过本金</strong>，存在爆仓与穿仓风险。</li>
-      <li>期权买方可能<strong>亏损全部权利金</strong>；期权卖方在裸卖时面临理论上无限亏损。</li>
-    </ul>
-
-    <h3>④ 心理与执行风险</h3>
-    <ul>
-      <li>策略本身是中性的，<strong>真正的风险在执行人身上</strong>：不止损、加杠杆、报复性交易。</li>
-      <li>同一个策略不同人执行，结果可能南辕北辙。请先用小仓位验证规则与心理。</li>
-    </ul>
-  </div>
-
-  <div class="callout warn" style="margin-top: 16px;">
-    <strong>免责声明。</strong> 本页内容为决策辅助与策略科普，<strong>不构成投资建议</strong>，<strong>不保证盈利</strong>，<strong>不对任何实盘损失负责</strong>。任何实盘操作前请独立判断或咨询持牌专业人士。
-  </div>
+      <div class="callout warn" style="margin-top: 16px;">
+        <strong>免责声明。</strong> 本页内容为决策辅助与策略科普，<strong>不构成投资建议</strong>，<strong>不保证盈利</strong>，<strong>不对任何实盘损失负责</strong>。任何实盘操作前请独立判断或咨询持牌专业人士。
+      </div>
+    </div>
+  </details>
 
   <footer>
-    智能交易决策系统 v2.0 · 教育目的 · 数据为公开 API + 内置静态策略库
+    智策 TradingForge v2.5 · 教育目的 · 数据为公开 API + 内置静态策略库 · <span class="muted">仓库：<code>nanfengpo/trading-forge</code></span>
   </footer>
 </section>
 

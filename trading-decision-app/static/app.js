@@ -197,6 +197,15 @@ const Router = {
     document.querySelectorAll("nav.tabs .tabs-left button").forEach(btn => {
       btn.addEventListener("click", () => this.go(btn.dataset.tab));
     });
+    // Any element on the page can declare data-go="tabid" and become a
+    // deep-link routed through the router. Used by homepage CTAs +
+    // module cards; safe to drop into any future page too.
+    document.addEventListener("click", e => {
+      const el = e.target.closest("[data-go]");
+      if (!el) return;
+      e.preventDefault();
+      this.go(el.dataset.go);
+    });
     window.addEventListener("popstate", () => {
       const tab = this._tabFromPath(location.pathname) || "home";
       this.go(tab, { push: false });
