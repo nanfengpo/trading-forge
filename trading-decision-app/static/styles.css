@@ -1074,12 +1074,13 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 .watchlist-empty:empty { display: none; }
 .watchlist-list { list-style: none; margin: 0; padding: 0; }
 
-/* Compact sidebar row: ticker / price / pct (3 columns, no OHLC etc.) */
+/* Sidebar row: drag-handle / pin / ticker / price / pct (5 cols). */
 .watchlist-row {
-  display: grid; grid-template-columns: 1fr auto auto;
-  gap: 8px; align-items: center;
+  display: grid; grid-template-columns: auto auto 1fr auto auto;
+  gap: 6px; align-items: center;
   padding: 10px 12px; border-bottom: 1px solid var(--border);
-  cursor: pointer; transition: background 0.1s;
+  cursor: pointer; transition: background 0.1s, opacity 0.1s;
+  position: relative;
 }
 .watchlist-row:last-child { border-bottom: none; }
 .watchlist-row:hover { background: var(--bg-soft); }
@@ -1088,6 +1089,44 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   border-left: 3px solid var(--accent);
   padding-left: 9px;
 }
+.watchlist-row.pinned {
+  background: color-mix(in srgb, #b89030 6%, transparent);
+}
+.watchlist-row.pinned.selected {
+  background: color-mix(in srgb, var(--accent) 12%, color-mix(in srgb, #b89030 8%, transparent));
+}
+.watchlist-row.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+.watchlist-row.drop-target {
+  border-top: 2px solid var(--accent);
+}
+
+.wl-side-drag {
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: 14px;
+  user-select: none;
+  opacity: 0.4;
+  padding: 0 2px;
+  transition: opacity 0.12s;
+}
+.watchlist-row:hover .wl-side-drag { opacity: 0.85; }
+.watchlist-row.dragging .wl-side-drag { cursor: grabbing; }
+
+.wl-side-pin {
+  background: transparent; border: none; cursor: pointer;
+  font-size: 13px; padding: 1px 4px; border-radius: 4px;
+  opacity: 0.35;
+  transition: opacity 0.12s, background 0.12s;
+  color: var(--text-muted);
+  line-height: 1;
+}
+.watchlist-row:hover .wl-side-pin { opacity: 0.85; }
+.wl-side-pin.on { opacity: 1; }
+.wl-side-pin:hover { background: var(--bg); }
+
 .wl-side-ticker  { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .wl-side-ticker .wl-name { display: block; font-size: 11px; color: var(--text-muted); font-weight: 400; margin-top: 1px; }
 .wl-side-price   { font-family: ui-monospace, monospace; font-size: 13px; text-align: right; }

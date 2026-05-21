@@ -3190,14 +3190,34 @@ const Watchlist = {
     return [...groups.entries()];
   },
 
+  /** Sort by (is_pinned DESC, sort_order ASC, added_at DESC). Used by
+   *  both the rendering pipeline and the persist-order routine after a
+   *  drag-and-drop reorder. */
+  _sorted(entries) {
+    return [...entries].sort((a, b) => {
+      const ap = a.is_pinned ? 1 : 0;
+      const bp = b.is_pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      const aso = (a.sort_order != null) ? a.sort_order : 1e9;
+      const bso = (b.sort_order != null) ? b.sort_order : 1e9;
+      if (aso !== bso) return aso - bso;
+      const at = new Date(a.added_at || 0).getTime();
+      const bt = new Date(b.added_at || 0).getTime();
+      return bt - at;
+    });
+  },
+
   _filtered() {
     const g = this.activeGroup;
-    if (g === "all") return this.cache;
-    if (g.startsWith("custom:")) {
+    let pool;
+    if (g === "all") pool = this.cache;
+    else if (g.startsWith("custom:")) {
       const name = g.slice(7);
-      return this.cache.filter(e => e.custom_group === name);
+      pool = this.cache.filter(e => e.custom_group === name);
+    } else {
+      pool = this.cache.filter(e => (e.market || "other") === g);
     }
-    return this.cache.filter(e => (e.market || "other") === g);
+    return this._sorted(pool);
   },
 
   // ---- formatters --------------------------------------------------------
@@ -3244,7 +3264,7 @@ const Watchlist = {
     }
     this.emptyEl.innerHTML = "";
 
-    const filtered = this._filtered();
+    const filtered = this._filtered();  // already (is_pinned DESC, sort_order ASC, added_at DESC)
     const fmt = (n, d=2) => (n == null || isNaN(n)) ? "—" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
     const fmtPct = (p) => (p == null || isNaN(p)) ? "—" : (p >= 0 ? "+" : "") + Number(p).toFixed(2) + "%";
 
@@ -3260,8 +3280,16 @@ const Watchlist = {
       const dirCls = pct == null ? "" : (pct >= 0 ? "up" : "down");
       const isSelected = this.selectedId === e.id;
       const nameSub = e.display_name || (q.name && q.name !== e.ticker ? q.name : "");
+      const pinned = !!e.is_pinned;
+      // Draggable rows + per-row pin button. The pin icon also doubles as the
+      // "this row is pinned" indicator when active (gold) so the user can see
+      // pin state at a glance.
       return `
-        <li class="watchlist-row ${isSelected ? "selected" : ""}" data-id="${e.id}" data-ticker="${escapeHtml(e.ticker)}">
+        <li class="watchlist-row ${isSelected ? "selected" : ""} ${pinned ? "pinned" : ""}"
+            data-id="${e.id}" data-ticker="${escapeHtml(e.ticker)}"
+            data-pinned="${pinned ? "1" : "0"}" draggable="true">
+          <span class="wl-side-drag" title="拖动以排序">⠿</span>
+          <button class="wl-side-pin ${pinned ? "on" : ""}" data-wl-pin="${e.id}" title="${pinned ? "取消置顶" : "置顶"}">${pinned ? "📌" : "📍"}</button>
           <span class="wl-side-ticker">${escapeHtml(e.ticker)}${nameSub ? `<span class="wl-name">${escapeHtml(nameSub)}</span>` : ""}</span>
           <span class="wl-side-price">${fmt(q.price)}</span>
           <span class="wl-side-pct ${dirCls}">${fmtPct(pct)}</span>
@@ -3415,14 +3443,148 @@ const Watchlist = {
   },
 
   _wireRows() {
+    // Row click → select (ignored when clicking the pin button or drag handle).
     this.listEl.querySelectorAll(".watchlist-row").forEach(li => {
-      li.addEventListener("click", () => {
+      li.addEventListener("click", (ev) => {
+        if (ev.target.closest(".wl-side-pin, .wl-side-drag")) return;
         const id = li.dataset.id;
         if (this.selectedId === id) return;
         this.selectedId = id;
         this.render();
       });
     });
+    // Per-row pin button.
+    this.listEl.querySelectorAll("[data-wl-pin]").forEach(btn => {
+      btn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        await this._togglePin(btn.dataset.wlPin);
+      });
+    });
+    // Drag-to-reorder (within the same pinned/unpinned group).
+    this.listEl.querySelectorAll(".watchlist-row").forEach(li => {
+      li.addEventListener("dragstart", (ev) => this._onDragStart(ev, li));
+      li.addEventListener("dragover",  (ev) => this._onDragOver(ev, li));
+      li.addEventListener("dragleave", (ev) => this._onDragLeave(ev, li));
+      li.addEventListener("drop",      (ev) => this._onDrop(ev, li));
+      li.addEventListener("dragend",   ()   => this._onDragEnd());
+    });
+  },
+
+  // ---- pin / drag ---------------------------------------------------------
+
+  async _togglePin(id) {
+    if (!id) return;
+    const entry = this.cache.find(e => e.id === id);
+    if (!entry) return;
+    const newVal = !entry.is_pinned;
+    // Optimistic local update so the UI feels instant.
+    entry.is_pinned = newVal;
+    // Pinning bumps to the top of its pool — assign a fresh sort_order so the
+    // user's intent ("most recently pinned floats up") matches what they see.
+    entry.sort_order = newVal ? -Date.now() : Date.now();
+    // Persist
+    if (this._useRemote()) {
+      await window.Watchlist.update(id, { is_pinned: newVal, sort_order: entry.sort_order });
+    } else {
+      const all = this._readLocal();
+      const idx = all.findIndex(x => x.id === id);
+      if (idx >= 0) {
+        all[idx].is_pinned = newVal;
+        all[idx].sort_order = entry.sort_order;
+        localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all));
+      }
+    }
+    // Normalise sort_order across the pool so future drags work from a clean
+    // sequence (0,1,2,…). Fire-and-forget — best effort.
+    this._normaliseSortOrder().catch(e => console.warn("normalise order", e));
+    this.render();
+  },
+
+  _onDragStart(ev, li) {
+    this._dragId = li.dataset.id;
+    this._dragPinned = li.dataset.pinned === "1";
+    li.classList.add("dragging");
+    try {
+      ev.dataTransfer.effectAllowed = "move";
+      ev.dataTransfer.setData("text/plain", li.dataset.id);
+    } catch (_) { /* some browsers throw on text/plain */ }
+  },
+
+  _onDragOver(ev, li) {
+    if (!this._dragId || this._dragId === li.dataset.id) return;
+    // Only allow dropping within the same group (pinned or unpinned).
+    if ((li.dataset.pinned === "1") !== this._dragPinned) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "move";
+    li.classList.add("drop-target");
+  },
+
+  _onDragLeave(_ev, li) {
+    li.classList.remove("drop-target");
+  },
+
+  async _onDrop(ev, li) {
+    ev.preventDefault();
+    li.classList.remove("drop-target");
+    const dragId = this._dragId;
+    const targetId = li.dataset.id;
+    if (!dragId || dragId === targetId) return;
+    if ((li.dataset.pinned === "1") !== this._dragPinned) return;
+    // Reorder this.cache: pull dragId out and insert before targetId.
+    const sorted = this._sorted(this.cache);
+    const di = sorted.findIndex(e => e.id === dragId);
+    const ti = sorted.findIndex(e => e.id === targetId);
+    if (di < 0 || ti < 0) return;
+    const [moved] = sorted.splice(di, 1);
+    const newTi = sorted.findIndex(e => e.id === targetId);  // recompute after splice
+    sorted.splice(newTi, 0, moved);
+    // Reassign sort_order across each pool independently.
+    let pinSeq = 0, unpinSeq = 0;
+    sorted.forEach(e => {
+      if (e.is_pinned) e.sort_order = pinSeq++;
+      else             e.sort_order = unpinSeq++;
+    });
+    // Mutate the actual cache items (sorted is a fresh array but the entry
+    // objects are shared by reference, so the writes above already updated them).
+    this.render();
+    // Persist
+    await this._persistOrder();
+  },
+
+  _onDragEnd() {
+    this.listEl.querySelectorAll(".watchlist-row")
+      .forEach(li => li.classList.remove("dragging", "drop-target"));
+    this._dragId = null;
+    this._dragPinned = null;
+  },
+
+  /** Push sort_order to Supabase (single batch) or localStorage. */
+  async _persistOrder() {
+    if (this._useRemote()) {
+      const ordered = this._sorted(this.cache).map(e => e.id);
+      await window.Watchlist.reorder(ordered);
+    } else {
+      const all = this._readLocal();
+      // Merge our sort_order back into localStorage.
+      const byId = new Map(this.cache.map(e => [e.id, e]));
+      for (const r of all) {
+        const mine = byId.get(r.id);
+        if (mine) { r.sort_order = mine.sort_order; r.is_pinned = mine.is_pinned; }
+      }
+      localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all));
+    }
+  },
+
+  /** Normalise sort_order 0,1,2,… across pinned + unpinned pools so the
+   *  numbers don't drift to wild ranges after many pin/unpin operations. */
+  async _normaliseSortOrder() {
+    const sorted = this._sorted(this.cache);
+    let pinSeq = 0, unpinSeq = 0;
+    sorted.forEach(e => {
+      if (e.is_pinned) e.sort_order = pinSeq++;
+      else             e.sort_order = unpinSeq++;
+    });
+    await this._persistOrder();
   },
 
   _wireMain(entry) {

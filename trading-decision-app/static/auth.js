@@ -213,17 +213,36 @@
   };
 
   // --------------------------------------------------------- Watchlist
+  // Schema notes (after migration 0009):
+  //   user_id uuid, ticker text, display_name text, market text,
+  //   custom_group text, sort_order int default 0, is_pinned bool default false,
+  //   note text, added_at timestamptz default now().
+  // List order: (is_pinned DESC, sort_order ASC, added_at DESC) so pinned
+  // tickers float to the top and drag-reorder controls the rest.
   const Watchlist = {
+    _isPinnedMissing: false,
+
     async list() {
       if (!client || !session) return { rows: [], error: null };
-      const { data, error } = await client
-        .from("watchlist")
-        .select("*")
-        .order("sort_order", { ascending: true })
-        .order("added_at", { ascending: false });
+      // Try the post-0009 ordering first; fall back to legacy if the new
+      // column hasn't been migrated yet.
+      let q = client.from("watchlist").select("*");
+      q = this._isPinnedMissing
+        ? q.order("sort_order", { ascending: true }).order("added_at", { ascending: false })
+        : q.order("is_pinned", { ascending: false }).order("sort_order", { ascending: true }).order("added_at", { ascending: false });
+      let { data, error } = await q;
+      if (error && /column .*is_pinned.* does not exist/i.test(error.message || "")) {
+        this._isPinnedMissing = true;
+        console.warn("[watchlist] is_pinned column missing — run migration 0009. Falling back to legacy ordering.");
+        const r2 = await client.from("watchlist").select("*")
+          .order("sort_order", { ascending: true }).order("added_at", { ascending: false });
+        data = r2.data;
+        error = r2.error;
+      }
       if (error) { console.error("[watchlist] list", error); return { rows: [], error: error.message }; }
       return { rows: data || [], error: null };
     },
+
     async add(entry) {
       if (!client || !session) return { error: "未登录" };
       const row = {
@@ -234,22 +253,70 @@
         custom_group: entry.custom_group || null,
         note: entry.note || null,
       };
+      if (!this._isPinnedMissing) row.is_pinned = !!entry.is_pinned;
       if (!row.ticker) return { error: "代码不能为空" };
       const { data, error } = await client.from("watchlist").upsert(row, { onConflict: "user_id,ticker" }).select().single();
-      if (error) { console.error("[watchlist] add", error); return { error: error.message }; }
+      if (error) {
+        if (/column .*is_pinned.* does not exist/i.test(error.message || "")) {
+          this._isPinnedMissing = true;
+          const { is_pinned, ...rest } = row;
+          const r2 = await client.from("watchlist").upsert(rest, { onConflict: "user_id,ticker" }).select().single();
+          if (r2.error) { console.error("[watchlist] add retry", r2.error); return { error: r2.error.message }; }
+          return { row: r2.data };
+        }
+        console.error("[watchlist] add", error);
+        return { error: error.message };
+      }
       return { row: data };
     },
+
     async remove(id) {
       if (!client || !session) return false;
       const { error } = await client.from("watchlist").delete().eq("id", id);
       if (error) { console.error("[watchlist] remove", error); return false; }
       return true;
     },
+
     async update(id, patch) {
       if (!client || !session) return false;
-      const { error } = await client.from("watchlist").update(patch).eq("id", id);
-      if (error) { console.error("[watchlist] update", error); return false; }
+      // Strip is_pinned if the migration hasn't been applied yet.
+      const upPatch = this._isPinnedMissing
+        ? (() => { const { is_pinned, ...rest } = patch; return rest; })()
+        : patch;
+      const { error } = await client.from("watchlist").update(upPatch).eq("id", id);
+      if (error) {
+        if (/column .*is_pinned.* does not exist/i.test(error.message || "")) {
+          this._isPinnedMissing = true;
+          const { is_pinned, ...rest } = patch;
+          const r2 = await client.from("watchlist").update(rest).eq("id", id);
+          if (r2.error) { console.error("[watchlist] update retry", r2.error); return false; }
+          return true;
+        }
+        console.error("[watchlist] update", error);
+        return false;
+      }
       return true;
+    },
+
+    /** Batch-assign sort_order = 0,1,2,... to the given ordered ids.
+     *  Fires N updates in parallel (Promise.all). Best-effort: errors logged. */
+    async reorder(orderedIds) {
+      if (!client || !session) return false;
+      if (!Array.isArray(orderedIds) || !orderedIds.length) return true;
+      const updates = orderedIds.map((id, idx) =>
+        client.from("watchlist").update({ sort_order: idx }).eq("id", id)
+      );
+      try {
+        const results = await Promise.all(updates);
+        const errs = results.filter(r => r.error);
+        if (errs.length) {
+          console.warn("[watchlist] reorder partial fail", errs.map(r => r.error.message));
+        }
+        return true;
+      } catch (e) {
+        console.error("[watchlist] reorder crash", e);
+        return false;
+      }
     },
   };
 
