@@ -1720,10 +1720,10 @@ const DecisionsPage = {
     pinned:     false,
     favorited:  false,
     dateRange:  "all",
-    ticker:     new Set(),   // multi-select ticker filter, empty = all
+    ticker:     new Set(),   // multi-select whitelist, empty = no filter
   },
   _tickerOpen: false,        // ticker-filter panel open state
-  _tickerSearch: "",         // ticker-filter search box content
+  _tickerInited: false,      // whether default "全选" was applied on first watchlist load
   search: "",
   sort:   "time-desc",
 
@@ -1737,12 +1737,11 @@ const DecisionsPage = {
     this.kpiEl     = document.getElementById("decisions-kpi");
     this.searchEl  = document.getElementById("decisions-search");
     this.sortEl    = document.getElementById("decisions-sort");
-    this.tickerWrapEl   = document.getElementById("decisions-ticker-filter");
-    this.tickerTriggerEl= document.getElementById("ticker-filter-trigger");
-    this.tickerLabelEl  = document.getElementById("ticker-filter-label");
-    this.tickerPanelEl  = document.getElementById("ticker-filter-panel");
-    this.tickerOptsEl   = document.getElementById("ticker-filter-options");
-    this.tickerSearchEl = document.getElementById("ticker-filter-search");
+    this.tickerWrapEl    = document.getElementById("decisions-ticker-filter");
+    this.tickerTriggerEl = document.getElementById("ticker-filter-trigger");
+    this.tickerLabelEl   = document.getElementById("ticker-filter-label");
+    this.tickerPanelEl   = document.getElementById("ticker-filter-panel");
+    this.tickerOptsEl    = document.getElementById("ticker-filter-options");
     if (!this.listEl) return;  // tab not in DOM (older index.html)
 
     // Same belt-and-suspenders anti-autofill stomp the old History tab used:
@@ -1797,8 +1796,9 @@ const DecisionsPage = {
     this.filters.ticker.clear();
     this.search = "";
     if (this.searchEl) this.searchEl.value = "";
-    this._tickerSearch = "";
-    if (this.tickerSearchEl) this.tickerSearchEl.value = "";
+    // Re-apply the "全选" default after a full filter reset.
+    this._tickerInited = false;
+    this._initTickerDefault();
     this.render();
   },
 
@@ -1932,7 +1932,12 @@ const DecisionsPage = {
         const days = { "7d": 7, "30d": 30, "90d": 90 }[f.dateRange] || 0;
         if (now - t > days * 86400 * 1000) return false;
       }
-      if (f.ticker.size && !f.ticker.has(String(e.ticker || "").toUpperCase())) return false;
+      // Ticker filter (whitelist over the watchlist). A decision is hidden
+      // only when its ticker is in the watchlist but unchecked here. Decisions
+      // for non-watchlist tickers are never filtered out by this control.
+      const wlSet = this._watchlistTickerSet();
+      const tUpper = String(e.ticker || "").toUpperCase();
+      if (wlSet.has(tUpper) && !f.ticker.has(tUpper)) return false;
       if (this.search) {
         const q = this.search;
         const hay = `${e.ticker} ${e.user_note || ""} ${e.llm_provider || ""} ${e.deep_think_llm || ""}`.toLowerCase();
@@ -2107,13 +2112,25 @@ const DecisionsPage = {
    * Bind events for the multi-select "标的" filter widget. Called once from
    * init(); the render layer (renderTickerFilter) only repaints option rows.
    */
+  /**
+   * Bind events for the multi-select "标的" filter widget. Only the
+   * trigger toggle + outside-click + Esc are bound here; row + 全选 row
+   * handlers are re-bound on every render inside _paintTickerOptions
+   * because the option DOM is innerHTML-replaced.
+   */
   _bindTickerFilter() {
     if (!this.tickerWrapEl || !this.tickerTriggerEl) return;
+    // Use mousedown so the open state flips BEFORE the document
+    // click handler runs (which would otherwise close it on toggle).
     this.tickerTriggerEl.addEventListener("click", e => {
+      e.preventDefault();
       e.stopPropagation();
       this._tickerOpen = !this._tickerOpen;
       this._applyTickerOpenState();
     });
+    // Clicks inside the panel shouldn't bubble to the document handler
+    // that closes the panel — without this, every checkbox click closes us.
+    this.tickerPanelEl?.addEventListener("click", e => e.stopPropagation());
     // Outside-click closes the panel.
     document.addEventListener("click", e => {
       if (!this._tickerOpen) return;
@@ -2122,55 +2139,55 @@ const DecisionsPage = {
         this._applyTickerOpenState();
       }
     });
-    // Esc closes the panel.
     document.addEventListener("keydown", e => {
       if (e.key === "Escape" && this._tickerOpen) {
         this._tickerOpen = false;
         this._applyTickerOpenState();
       }
     });
-    if (this.tickerSearchEl) {
-      this.tickerSearchEl.addEventListener("input", e => {
-        this._tickerSearch = e.target.value.trim().toLowerCase();
-        this._paintTickerOptions();
-      });
-      this.tickerSearchEl.addEventListener("click", e => e.stopPropagation());
-    }
-    // "全选自选" / "清空"
-    this.tickerPanelEl?.querySelectorAll("[data-act]").forEach(b => {
-      b.addEventListener("click", e => {
-        e.stopPropagation();
-        if (b.dataset.act === "clear") {
-          this.filters.ticker.clear();
-        } else if (b.dataset.act === "all") {
-          // Add every watchlist ticker (UPPERCASE) to the selection.
-          const wlRows = (typeof Watchlist !== "undefined" && Array.isArray(Watchlist.cache)) ? Watchlist.cache : [];
-          wlRows.forEach(r => {
-            const t = String(r.ticker || "").toUpperCase();
-            if (t) this.filters.ticker.add(t);
-          });
-        }
-        this.render();
-      });
+  },
+
+  _watchlistTickerSet() {
+    const wlRows = (typeof Watchlist !== "undefined" && Array.isArray(Watchlist.cache)) ? Watchlist.cache : [];
+    const s = new Set();
+    wlRows.forEach(r => {
+      const t = String(r.ticker || "").toUpperCase();
+      if (t) s.add(t);
     });
+    return s;
   },
 
   _applyTickerOpenState() {
     if (!this.tickerWrapEl) return;
     this.tickerWrapEl.dataset.open = this._tickerOpen ? "true" : "false";
     this.tickerTriggerEl?.setAttribute("aria-expanded", this._tickerOpen ? "true" : "false");
-    if (this._tickerOpen && this.tickerSearchEl) {
-      setTimeout(() => this.tickerSearchEl.focus(), 30);
-    }
   },
 
   /**
-   * Render the "标的" multi-select widget: trigger label + checkbox list.
-   * Watchlist tickers come first (with display names), then any extra
-   * tickers seen in history but absent from the watchlist.
+   * One-shot initializer: when the watchlist first becomes non-empty,
+   * pre-populate `filters.ticker` with every watchlist ticker so the
+   * default visual state is "全部选中" (all checkboxes checked).
+   */
+  _initTickerDefault() {
+    if (this._tickerInited) return;
+    const wlRows = (typeof Watchlist !== "undefined" && Array.isArray(Watchlist.cache)) ? Watchlist.cache : [];
+    if (!wlRows.length) return;       // wait until watchlist is loaded
+    wlRows.forEach(r => {
+      const t = String(r.ticker || "").toUpperCase();
+      if (t) this.filters.ticker.add(t);
+    });
+    this._tickerInited = true;
+  },
+
+  /**
+   * Render the "标的" multi-select widget: trigger label + 全选 row +
+   * checkbox list. Watchlist tickers come first (with display names),
+   * then any extra tickers that appear in history but aren't watchlisted.
    */
   renderTickerFilter() {
     if (!this.tickerOptsEl) return;
+    this._initTickerDefault();
+
     const items = this._allItems();
     const historyCounts = new Map();
     items.forEach(e => {
@@ -2190,16 +2207,11 @@ const DecisionsPage = {
         ticker: t,
         name: r.display_name || r.name || "",
         count: historyCounts.get(t) || 0,
-        watchlist: true,
       });
     });
-    const extraOpts = [];
-    historyCounts.forEach((count, t) => {
-      if (!wlSeen.has(t)) extraOpts.push({ ticker: t, name: "", count, watchlist: false });
-    });
-    extraOpts.sort((a, b) => a.ticker.localeCompare(b.ticker));
-
-    this._tickerAllOpts = { wl: wlOpts, extra: extraOpts };
+    // Per spec: dropdown shows the 自选 list only. Decisions for tickers
+    // outside the watchlist are NOT filtered out — they always pass through.
+    this._tickerAllOpts = { wl: wlOpts, extra: [] };
     this._paintTickerOptions();
     this._paintTickerLabel();
   },
@@ -2207,8 +2219,14 @@ const DecisionsPage = {
   _paintTickerLabel() {
     if (!this.tickerLabelEl) return;
     const sel = this.filters.ticker;
+    const total = ((this._tickerAllOpts?.wl?.length) || 0) + ((this._tickerAllOpts?.extra?.length) || 0);
     if (!sel.size) {
-      this.tickerLabelEl.textContent = "全部标的";
+      this.tickerLabelEl.textContent = "全部标的（未选）";
+      this.tickerWrapEl?.classList.remove("has-selection");
+      return;
+    }
+    if (sel.size === total && total > 0) {
+      this.tickerLabelEl.textContent = `全部标的（${total}）`;
       this.tickerWrapEl?.classList.remove("has-selection");
       return;
     }
@@ -2221,9 +2239,11 @@ const DecisionsPage = {
   _paintTickerOptions() {
     if (!this.tickerOptsEl || !this._tickerAllOpts) return;
     const { wl, extra } = this._tickerAllOpts;
-    const q = this._tickerSearch || "";
-    const match = o => !q || o.ticker.toLowerCase().includes(q) || (o.name || "").toLowerCase().includes(q);
     const sel = this.filters.ticker;
+    const total = wl.length + extra.length;
+    const allChecked = total > 0 && sel.size === total &&
+      [...wl, ...extra].every(o => sel.has(o.ticker));
+
     const row = o => {
       const checked = sel.has(o.ticker);
       const sub = o.name ? `<span class="ticker-row-name">${escapeHtml(o.name)}</span>` : "";
@@ -2231,39 +2251,52 @@ const DecisionsPage = {
         ? `<span class="ticker-row-count">${o.count}</span>`
         : `<span class="ticker-row-count muted-count">0</span>`;
       return `
-        <label class="ticker-row ${checked ? "checked" : ""}" data-ticker="${escapeHtml(o.ticker)}">
-          <input type="checkbox" ${checked ? "checked" : ""} />
+        <div class="ticker-row ${checked ? "checked" : ""}" data-ticker="${escapeHtml(o.ticker)}" role="option" aria-selected="${checked}">
+          <span class="ticker-row-check ${checked ? "checked" : ""}" aria-hidden="true">${checked ? "✓" : ""}</span>
           <span class="ticker-row-tick">${escapeHtml(o.ticker)}</span>
           ${sub}
           ${meta}
-        </label>`;
+        </div>`;
     };
 
-    const wlFiltered = wl.filter(match);
-    const extraFiltered = extra.filter(match);
     const parts = [];
-    if (wlFiltered.length) {
+    // "全选" toggle row — always at top of the panel.
+    parts.push(`
+      <div class="ticker-row ticker-row-all ${allChecked ? "checked" : ""}" data-act="toggle-all" role="option" aria-selected="${allChecked}">
+        <span class="ticker-row-check ${allChecked ? "checked" : ""}" aria-hidden="true">${allChecked ? "✓" : ""}</span>
+        <span class="ticker-row-tick">全选</span>
+        <span class="ticker-row-count">${total}</span>
+      </div>`);
+
+    if (wl.length) {
       parts.push(`<div class="ticker-group-label">⭐ 自选</div>`);
-      wlFiltered.forEach(o => parts.push(row(o)));
+      wl.forEach(o => parts.push(row(o)));
     }
-    if (extraFiltered.length) {
+    if (extra.length) {
       parts.push(`<div class="ticker-group-label">历史决策（未加自选）</div>`);
-      extraFiltered.forEach(o => parts.push(row(o)));
+      extra.forEach(o => parts.push(row(o)));
     }
-    if (!wlFiltered.length && !extraFiltered.length) {
-      parts.push(`<div class="ticker-empty">${q ? "无匹配标的" : "暂无标的"}</div>`);
+    if (!wl.length && !extra.length) {
+      parts.push(`<div class="ticker-empty">自选列表为空。先在"自选"页加入标的，再来这里筛选。</div>`);
     }
     this.tickerOptsEl.innerHTML = parts.join("");
 
-    // Bind row toggles. Use the label click — preventing default avoids the
-    // double-toggle that happens when the native checkbox also fires.
+    // Re-bind row click handlers after innerHTML replacement.
     this.tickerOptsEl.querySelectorAll(".ticker-row").forEach(el => {
       el.addEventListener("click", e => {
         e.preventDefault();
         e.stopPropagation();
-        const t = el.dataset.ticker;
-        if (this.filters.ticker.has(t)) this.filters.ticker.delete(t);
-        else this.filters.ticker.add(t);
+        if (el.dataset.act === "toggle-all") {
+          // Toggle: if all checked → clear; otherwise → select all.
+          const everyT = [...this._tickerAllOpts.wl, ...this._tickerAllOpts.extra].map(o => o.ticker);
+          const isAll = everyT.length > 0 && everyT.every(t => this.filters.ticker.has(t));
+          if (isAll) this.filters.ticker.clear();
+          else everyT.forEach(t => this.filters.ticker.add(t));
+        } else {
+          const t = el.dataset.ticker;
+          if (this.filters.ticker.has(t)) this.filters.ticker.delete(t);
+          else this.filters.ticker.add(t);
+        }
         this.render();
       });
     });

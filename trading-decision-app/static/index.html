@@ -427,20 +427,13 @@
         <div class="ticker-filter" id="decisions-ticker-filter" data-open="false">
           <button type="button" class="ticker-filter-trigger" id="ticker-filter-trigger"
                   aria-haspopup="listbox" aria-expanded="false">
+            <span class="ticker-filter-icon">🎯</span>
             <span class="ticker-filter-label" id="ticker-filter-label">全部标的</span>
-            <span class="ticker-filter-caret">▾</span>
+            <span class="ticker-filter-caret" aria-hidden="true">▾</span>
           </button>
           <div class="ticker-filter-panel" id="ticker-filter-panel" role="listbox" aria-multiselectable="true">
-            <div class="ticker-filter-search-wrap">
-              <input type="text" class="ticker-filter-search" id="ticker-filter-search"
-                     placeholder="搜索标的…" autocomplete="off" />
-            </div>
-            <div class="ticker-filter-actions">
-              <button type="button" class="ticker-filter-action" data-act="all">全选自选</button>
-              <button type="button" class="ticker-filter-action" data-act="clear">清空</button>
-            </div>
             <div class="ticker-filter-options" id="ticker-filter-options">
-              <!-- checkbox rows injected by DecisionsPage.renderTickerFilter() -->
+              <!-- "全选" header row + checkbox rows injected by DecisionsPage.renderTickerFilter() -->
             </div>
           </div>
         </div>
