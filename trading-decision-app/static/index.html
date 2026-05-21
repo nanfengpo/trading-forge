@@ -456,72 +456,143 @@
 </section>
 
 <!-- ========================================================== -->
-<!--  FUNDAMENTALS DASHBOARD (基本面看板)                          -->
-<!--  Unified scoring across sectors. Each sub-tab has its own    -->
-<!--  ticker universe and per-metric weight matrix; composite     -->
-<!--  score is a sector-relative percentile blend.                -->
+<!--  FUNDAMENTALS DASHBOARD (基本面看板) — full redesign         -->
+<!--                                                              -->
+<!--  Layout (top → bottom):                                      -->
+<!--    1. Hero strip — title, last-updated, refresh              -->
+<!--    2. MACRO row — all 5 sectors side-by-side                 -->
+<!--       (median score, good/mid/high histogram, top ticker)    -->
+<!--    3. Sector deep-dive — split panel                         -->
+<!--       L = sector context, weight bars, KPI grid              -->
+<!--       R = score distribution dot-strip + legend              -->
+<!--    4. Top 5 / Bottom 5 picks — each card shows sub-score     -->
+<!--       breakdown bars + strongest/weakest metric badges       -->
+<!--    5. Full table — inline score bar per row + expandable     -->
+<!--       sub-score breakdown                                    -->
 <!-- ========================================================== -->
 <section class="tab-content" id="fundamentals">
-  <div class="fund-page">
-    <header class="fund-head">
-      <div>
-        <h2 style="margin:0;">📊 基本面看板</h2>
-        <p class="muted" style="margin:4px 0 0; font-size:13px;">
-          按板块的多维基本面打分（PE · Fwd PE · PEG-AV · PEG-Fwd · 营收 YoY · 利润 YoY），
-          权重按板块调整 — 不同行业看重的指标不一样，分数也因此不同。
+  <div class="fund2">
+
+    <!-- ─── HERO ─── -->
+    <header class="fund2-hero">
+      <div class="fund2-hero-title">
+        <div class="fund2-hero-eyebrow">FUNDAMENTAL DESK · 基本面研判</div>
+        <h2 class="fund2-hero-h">基本面看板</h2>
+        <p class="fund2-hero-sub">
+          5 大板块 · 6 维度 · 板块自适应权重的综合评分。
+          每只股票在<strong>板块内</strong>做百分位排序 → 加权 → 0–100 综合分。
         </p>
       </div>
-      <div style="display:flex; gap:6px; align-items:center;">
-        <span class="muted" style="font-size:12px;" id="fund-updated"></span>
-        <button class="btn secondary small" id="fund-refresh">↻ 刷新</button>
+      <div class="fund2-hero-meta">
+        <div class="fund2-hero-stamp">
+          <span class="fund2-hero-stamp-label">DATA STAMP</span>
+          <span class="fund2-hero-stamp-value" id="fund2-updated">—</span>
+        </div>
+        <button class="btn secondary small" id="fund2-refresh" title="重新拉取所有板块数据">↻ 刷新全部</button>
       </div>
     </header>
 
-    <!-- Sub-tab strip: one chip per sector. Populated by JS so adding
-         a sector in fundamentals.py automatically shows up here. -->
-    <div class="fund-subtabs" id="fund-subtabs">
-      <div class="muted" style="padding:8px; font-size:13px;">加载板块列表…</div>
-    </div>
-
-    <!-- Sector context: description + weight rationale + weight bars -->
-    <div class="fund-context" id="fund-context"></div>
-
-    <!-- KPI strip: total tickers / median score / good / mid / high -->
-    <div class="fund-kpis" id="fund-kpis"></div>
-
-    <!-- Two pick grids side by side -->
-    <div class="fund-picks">
-      <section class="fund-pick-section">
-        <h3>👍 综合评分 Top 5 <span class="muted" style="font-weight:normal;">— 当前板块最具吸引力</span></h3>
-        <div class="picks-grid" id="fund-top-picks"></div>
-      </section>
-      <section class="fund-pick-section">
-        <h3>👎 综合评分 Bottom 5 <span class="muted" style="font-weight:normal;">— 同板块对照参考</span></h3>
-        <div class="picks-grid" id="fund-bottom-picks"></div>
-      </section>
-    </div>
-
-    <!-- Full scored table -->
-    <section>
-      <h3>全量评分表（点击表头排序）</h3>
-      <div class="fund-table-toolbar">
-        <input id="fund-search" placeholder="🔍 搜索代码 / 公司名 / 行业…" />
-        <select id="fund-class-filter">
-          <option value="">全部分级</option>
-          <option value="good">优秀（≥70）</option>
-          <option value="mid">中性（45-70）</option>
-          <option value="high">弱势（&lt;45）</option>
-          <option value="na">数据缺失</option>
-        </select>
+    <!-- ─── MACRO ROW ─── -->
+    <div class="fund2-macro-shell">
+      <div class="fund2-section-label">
+        <span class="fund2-section-num">01</span>
+        <span class="fund2-section-name">板块横评 · MACRO</span>
+        <span class="fund2-section-hint">点击任意板块卡进入详情</span>
       </div>
-      <div class="fund-table-wrap">
-        <table id="fund-table">
+      <div class="fund2-macro-row" id="fund2-macro">
+        <div class="fund2-macro-loading">加载 5 个板块的横向对比…</div>
+      </div>
+    </div>
+
+    <!-- ─── SECTOR DEEP-DIVE ─── -->
+    <div class="fund2-deep" id="fund2-deep">
+      <div class="fund2-section-label">
+        <span class="fund2-section-num">02</span>
+        <span class="fund2-section-name">板块详情 · DEEP DIVE</span>
+        <span class="fund2-section-hint" id="fund2-deep-hint">—</span>
+      </div>
+
+      <div class="fund2-deep-grid">
+        <!-- Left: sector identity + weights + KPI grid -->
+        <div class="fund2-deep-left">
+          <div class="fund2-sector-card" id="fund2-sector-card">
+            <div class="fund2-skel">加载中…</div>
+          </div>
+        </div>
+
+        <!-- Right: score distribution plot -->
+        <div class="fund2-deep-right">
+          <div class="fund2-dist-head">
+            <div>
+              <div class="fund2-dist-title">综合分分布</div>
+              <div class="fund2-dist-sub muted">每个点 = 一只股票 · 横轴 = 综合分 · 阈值 45 / 70</div>
+            </div>
+            <div class="fund2-dist-legend">
+              <span class="fund2-legend-item"><span class="fund2-dot good"></span>优秀 ≥70</span>
+              <span class="fund2-legend-item"><span class="fund2-dot mid"></span>中性 45-70</span>
+              <span class="fund2-legend-item"><span class="fund2-dot high"></span>弱势 &lt;45</span>
+            </div>
+          </div>
+          <div class="fund2-dist-canvas-wrap">
+            <canvas id="fund2-dist-canvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── TOP / BOTTOM PICKS ─── -->
+    <div class="fund2-picks-shell">
+      <div class="fund2-section-label">
+        <span class="fund2-section-num">03</span>
+        <span class="fund2-section-name">最强 / 最弱 · PICKS</span>
+        <span class="fund2-section-hint">每张卡都拆解为 6 维度子分，强/弱项一目了然</span>
+      </div>
+      <div class="fund2-picks-grid">
+        <div class="fund2-pick-col">
+          <div class="fund2-col-head fund2-col-head--good">
+            <span class="fund2-col-arrow">▲</span>
+            <span class="fund2-col-title">综合分 Top 5</span>
+            <span class="fund2-col-sub muted">板块内最具吸引力</span>
+          </div>
+          <div class="fund2-pick-list" id="fund2-top"></div>
+        </div>
+        <div class="fund2-pick-col">
+          <div class="fund2-col-head fund2-col-head--high">
+            <span class="fund2-col-arrow">▼</span>
+            <span class="fund2-col-title">综合分 Bottom 5</span>
+            <span class="fund2-col-sub muted">同板块对照</span>
+          </div>
+          <div class="fund2-pick-list" id="fund2-bot"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── FULL TABLE ─── -->
+    <div class="fund2-table-shell">
+      <div class="fund2-section-label">
+        <span class="fund2-section-num">04</span>
+        <span class="fund2-section-name">全量评分表 · LEDGER</span>
+        <span class="fund2-section-hint">点击行展开 6 维度评分构成 · 点击表头排序</span>
+      </div>
+      <div class="fund2-table-toolbar">
+        <input id="fund2-search" placeholder="🔍 搜索代码 / 公司名 / 行业…" />
+        <select id="fund2-class-filter">
+          <option value="">全部分级</option>
+          <option value="good">仅优秀 ≥70</option>
+          <option value="mid">仅中性 45–70</option>
+          <option value="high">仅弱势 &lt;45</option>
+          <option value="na">仅数据缺失</option>
+        </select>
+        <span class="fund2-table-count" id="fund2-table-count"></span>
+      </div>
+      <div class="fund2-table-scroll">
+        <table class="fund2-table" id="fund2-table">
           <thead>
             <tr>
-              <th data-sort="rank" data-type="num">#</th>
+              <th class="fund2-th-rank" data-sort="rank" data-type="num">#</th>
               <th data-sort="ticker" data-type="text">代码</th>
               <th data-sort="name" data-type="text">公司</th>
-              <th data-sort="score" data-type="num" class="sort-desc">综合分 ▼</th>
+              <th class="fund2-th-score" data-sort="score" data-type="num">综合分 ▼</th>
               <th data-sort="pe" data-type="num">PE</th>
               <th data-sort="pe_fwd" data-type="num">Fwd PE</th>
               <th data-sort="peg_av" data-type="num">PEG (AV)</th>
@@ -531,24 +602,33 @@
               <th data-sort="market_cap" data-type="num">市值</th>
             </tr>
           </thead>
-          <tbody id="fund-tbody"></tbody>
+          <tbody id="fund2-tbody"></tbody>
         </table>
       </div>
-    </section>
+    </div>
 
-    <footer class="fund-footer">
-      <p>
-        <strong>打分方法</strong>：每个指标先在板块内做<strong>百分位排名</strong>（0–1），再映射到 0–100：
-        <em>"越低越好"</em>的指标（PE / PEG）用 <code>(1−百分位)×100</code>；
-        <em>"越高越好"</em>的指标（营收/利润同比）用 <code>百分位×100</code>。
-        然后按板块权重加权求和，得到 0–100 的综合分。
-        若某只股票缺失某指标，该指标的权重自动重新分摊给其他指标，<strong>不会因缺数据而被错杀</strong>。
-        负 PE / 负 PEG 的指标分直接判 0（即亏损公司在该项不给加分）。
-      </p>
-      <p class="muted">
-        数据源：Alpha Vantage <code>OVERVIEW</code>（每只股票一次 REST 调用，30 分钟 TTL 缓存）。
-        本看板仅供研究参考，不构成投资建议。
-      </p>
+    <!-- ─── METHODOLOGY ─── -->
+    <footer class="fund2-foot">
+      <div class="fund2-foot-grid">
+        <div class="fund2-foot-col">
+          <div class="fund2-foot-head">打分方法</div>
+          <p>板块内每个指标做<strong>百分位排名</strong>（0–1）→ 映射 0–100。
+            "越低越好"的指标（PE / PEG）用 <code>(1−p)×100</code>；
+            "越高越好"的指标（营收 / 利润同比）用 <code>p×100</code>。
+            按板块权重加权求和。</p>
+        </div>
+        <div class="fund2-foot-col">
+          <div class="fund2-foot-head">缺数据怎么办</div>
+          <p>某只股票缺失某指标 → 该指标的<strong>权重重新分摊</strong>给其他指标，
+            不会因为缺数据而被错杀。负 PE / 负 PEG → 该项直接判 0（亏损公司在该项不给加分）。</p>
+        </div>
+        <div class="fund2-foot-col">
+          <div class="fund2-foot-head">数据源</div>
+          <p>Alpha Vantage <code>OVERVIEW</code>，30 分钟 TTL 缓存。
+            指标含 PE / Fwd PE / PEG (AV) / PEG (Fwd, 自算) / Quarterly Rev YoY / Quarterly EPS YoY。
+            <strong>仅供研究，不构成投资建议</strong>。</p>
+        </div>
+      </div>
     </footer>
   </div>
 </section>

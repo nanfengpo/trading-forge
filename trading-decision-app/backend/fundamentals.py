@@ -420,6 +420,53 @@ def build_sector_payload(sector_id: str) -> Dict[str, Any]:
     }
 
 
+def build_overview() -> Dict[str, Any]:
+    """Cross-sector macro view — runs all sectors in parallel and returns
+    aggregate stats for the top strip. Heavy on first call (~5-10s for
+    ~100 tickers); near-instant once the per-ticker AV cache warms.
+    """
+    results: Dict[str, Dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="fund-ovr") as pool:
+        future_to_id = {pool.submit(build_sector_payload, sid): sid for sid in SECTORS}
+        for fut in future_to_id:
+            sid = future_to_id[fut]
+            try:
+                results[sid] = fut.result()
+            except Exception as e:
+                logger.warning("overview sector %s failed: %s", sid, e)
+                results[sid] = {"error": str(e)}
+
+    out = []
+    for sid, sector in SECTORS.items():
+        p = results.get(sid) or {}
+        stats = p.get("stats") or {}
+        picks_top = p.get("top_picks") or []
+        picks_bot = p.get("bottom_picks") or []
+        top1 = picks_top[0] if picks_top else None
+        bottom1 = picks_bot[0] if picks_bot else None
+        out.append({
+            "id": sid,
+            "name": sector["name"],
+            "icon": sector["icon"],
+            "ticker_count": len(sector["tickers"]),
+            "median_score": stats.get("median_score"),
+            "with_score":   stats.get("with_score", 0),
+            "good":         stats.get("good", 0),
+            "mid":          stats.get("mid", 0),
+            "high":         stats.get("high", 0),
+            "top_ticker":   (top1 or {}).get("ticker") if top1 else None,
+            "top_score":    (top1 or {}).get("score")  if top1 else None,
+            "bottom_ticker":(bottom1 or {}).get("ticker") if bottom1 else None,
+            "bottom_score": (bottom1 or {}).get("score") if bottom1 else None,
+        })
+
+    return {
+        "sectors": out,
+        "generated_at": time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime()),
+        "data_source": "alpha_vantage_overview" if os.environ.get("ALPHA_VANTAGE_API_KEY") else "no_api_key",
+    }
+
+
 def list_sectors() -> Dict[str, Any]:
     """Lightweight sector index for the sub-tab strip."""
     return {
