@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TradingForge · 智策 · 多智能体投研工作台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/styles.css?v=20260522c">
 </head>
 <body>
 
@@ -423,20 +423,21 @@
     <!-- Sidebar layout: list of all decisions ←→ active decision cockpit -->
     <div class="decisions-shell">
       <aside class="decisions-sidebar">
-        <!-- Multi-select ticker filter (sourced from watchlist; sidebar width) -->
-        <div class="ticker-filter" id="decisions-ticker-filter" data-open="false">
-          <button type="button" class="ticker-filter-trigger" id="ticker-filter-trigger"
-                  aria-haspopup="listbox" aria-expanded="false">
-            <span class="ticker-filter-icon">🎯</span>
+        <!-- Multi-select ticker filter — built on the native <details> element
+             so the click-to-toggle is handled by the browser itself; no JS
+             race can ever break the open/close. -->
+        <details class="ticker-filter" id="decisions-ticker-filter">
+          <summary class="ticker-filter-trigger" id="ticker-filter-trigger">
+            <span class="ticker-filter-icon" aria-hidden="true">🎯</span>
             <span class="ticker-filter-label" id="ticker-filter-label">全部标的</span>
             <span class="ticker-filter-caret" aria-hidden="true">▾</span>
-          </button>
+          </summary>
           <div class="ticker-filter-panel" id="ticker-filter-panel" role="listbox" aria-multiselectable="true">
             <div class="ticker-filter-options" id="ticker-filter-options">
               <!-- "全选" header row + checkbox rows injected by DecisionsPage.renderTickerFilter() -->
             </div>
           </div>
-        </div>
+        </details>
         <div class="decisions-list-empty" id="decisions-list-empty"></div>
         <ul class="decisions-list" id="decisions-list"></ul>
       </aside>
@@ -742,6 +743,6 @@
 </script>
 <script src="/auth.js"></script>
 <script src="/strategies.js"></script>
-<script src="/app.js"></script>
+<script src="/app.js?v=20260522c"></script>
 </body>
 </html>

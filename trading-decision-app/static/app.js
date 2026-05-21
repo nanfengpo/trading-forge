@@ -2118,32 +2118,26 @@ const DecisionsPage = {
    * handlers are re-bound on every render inside _paintTickerOptions
    * because the option DOM is innerHTML-replaced.
    */
+  /**
+   * The widget root is a native <details> element — the browser handles
+   * open/close when the user clicks the <summary>. We just:
+   *  - mirror the open state into `_tickerOpen` via the "toggle" event,
+   *  - close on outside-click and Esc,
+   *  - stop clicks inside the panel from bubbling to body (so the page's
+   *    other listeners don't accidentally close us).
+   */
   _bindTickerFilter() {
-    if (!this.tickerWrapEl || !this.tickerTriggerEl) return;
-    // Use mousedown so the open state flips BEFORE the document
-    // click handler runs (which would otherwise close it on toggle).
-    this.tickerTriggerEl.addEventListener("click", e => {
-      e.preventDefault();
-      e.stopPropagation();
-      this._tickerOpen = !this._tickerOpen;
-      this._applyTickerOpenState();
+    if (!this.tickerWrapEl) return;
+    this.tickerWrapEl.addEventListener("toggle", () => {
+      this._tickerOpen = !!this.tickerWrapEl.open;
     });
-    // Clicks inside the panel shouldn't bubble to the document handler
-    // that closes the panel — without this, every checkbox click closes us.
     this.tickerPanelEl?.addEventListener("click", e => e.stopPropagation());
-    // Outside-click closes the panel.
     document.addEventListener("click", e => {
-      if (!this._tickerOpen) return;
-      if (!this.tickerWrapEl.contains(e.target)) {
-        this._tickerOpen = false;
-        this._applyTickerOpenState();
-      }
+      if (!this.tickerWrapEl.open) return;
+      if (!this.tickerWrapEl.contains(e.target)) this.tickerWrapEl.open = false;
     });
     document.addEventListener("keydown", e => {
-      if (e.key === "Escape" && this._tickerOpen) {
-        this._tickerOpen = false;
-        this._applyTickerOpenState();
-      }
+      if (e.key === "Escape" && this.tickerWrapEl.open) this.tickerWrapEl.open = false;
     });
   },
 
@@ -2157,10 +2151,12 @@ const DecisionsPage = {
     return s;
   },
 
+  // Legacy shim — the <details> element handles its own open state now. Kept
+  // because clearFilters() and a few callers in older code paths still call
+  // it; safe to remove once we audit every callsite.
   _applyTickerOpenState() {
     if (!this.tickerWrapEl) return;
-    this.tickerWrapEl.dataset.open = this._tickerOpen ? "true" : "false";
-    this.tickerTriggerEl?.setAttribute("aria-expanded", this._tickerOpen ? "true" : "false");
+    this.tickerWrapEl.open = !!this._tickerOpen;
   },
 
   /**
