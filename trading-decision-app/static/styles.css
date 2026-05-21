@@ -1174,11 +1174,34 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
    ========================================================================= */
 .decisions-page { max-width: 1500px; margin: 0 auto; }
 .decisions-head {
-  display: flex; justify-content: space-between; align-items: flex-start;
+  display: flex; justify-content: space-between; align-items: center;
   gap: 16px; margin-bottom: 14px; flex-wrap: wrap;
 }
+.decisions-head-title { flex: 1; min-width: 240px; }
+
+/* Prominent "新建决策" CTA — visually separated from the filter toolbar */
+.decisions-new-cta {
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 12px 22px; border-radius: 12px;
+  font-size: 14px; font-weight: 600; line-height: 1.15;
+  border: none; color: white; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong, var(--accent)));
+  box-shadow: 0 4px 14px rgba(56, 105, 240, 0.28);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+}
+.decisions-new-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(56, 105, 240, 0.38);
+  filter: brightness(1.05);
+}
+.decisions-new-cta:active { transform: translateY(0); }
+.decisions-new-cta .cta-icon { font-size: 18px; line-height: 1; }
+.decisions-new-cta .cta-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.decisions-new-cta .cta-title { font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
+.decisions-new-cta .cta-sub { font-size: 11px; opacity: 0.85; font-weight: 400; }
+
 .decisions-kpi {
-  display: flex; gap: 6px; flex-wrap: wrap;
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;
 }
 .decisions-kpi .kpi-cell {
   background: var(--bg-card); border: 1px solid var(--border);
@@ -1201,10 +1224,15 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   background: var(--bg-card); color: var(--text); font-size: 13px;
 }
 .decisions-search:focus { outline: none; border-color: var(--accent); }
-.decisions-sort {
+.decisions-sort,
+.decisions-ticker-filter {
   padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
   background: var(--bg-card); color: var(--text); font-size: 12px;
 }
+.decisions-ticker-filter {
+  min-width: 160px; max-width: 240px;
+}
+.decisions-ticker-filter:focus { outline: none; border-color: var(--accent); }
 
 /* Filter chip groups — share styles with history-page-filters */
 .decisions-filters {

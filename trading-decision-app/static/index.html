@@ -290,20 +290,29 @@
 <!-- ========================================================== -->
 <section class="tab-content" id="decisions">
   <div class="decisions-page">
-    <!-- Top bar: header + KPI + new-decision launcher -->
+    <!-- Top bar: title + description + prominent new-decision CTA -->
     <header class="decisions-head">
-      <div>
+      <div class="decisions-head-title">
         <h2 style="margin:0;">🎯 决策</h2>
         <p class="muted" style="margin:4px 0 0; font-size:13px;">
           所有 AI 决策都在这里：实时观察跑动中的会话、回顾历史结果，并查看分短/中/长期的目标价位与执行策略。
         </p>
       </div>
-      <div class="decisions-kpi" id="decisions-kpi"></div>
+      <button class="btn primary decisions-new-cta" id="decisions-new-btn"
+              title="启动一次新的 AI 决策分析">
+        <span class="cta-icon">▶</span>
+        <span class="cta-text">
+          <span class="cta-title">新建决策</span>
+          <span class="cta-sub">启动一次新的 AI 分析</span>
+        </span>
+      </button>
     </header>
 
-    <!-- Toolbar: + new + search + sort + clear -->
+    <!-- KPI strip -->
+    <div class="decisions-kpi" id="decisions-kpi"></div>
+
+    <!-- Toolbar: search + ticker filter + sort + bulk actions (no launcher) -->
     <div class="decisions-toolbar">
-      <button class="btn primary small" id="decisions-new-btn">▶ 新建决策</button>
       <!-- Same Chrome autofill decoy trick as the old History page -->
       <input type="text" name="email-decoy" autocomplete="username"
              tabindex="-1" aria-hidden="true"
@@ -315,6 +324,10 @@
              data-1p-ignore data-lpignore="true"
              onfocus="this.removeAttribute('readonly'); this.removeAttribute('value');"
              placeholder="🔍 搜索代码 / 备注 / 决策内容…" />
+      <select id="decisions-ticker-filter" class="decisions-ticker-filter"
+              title="按标的筛选历史决策">
+        <option value="">全部标的</option>
+      </select>
       <select id="decisions-sort" class="decisions-sort">
         <option value="time-desc">最近 ↓</option>
         <option value="time-asc">最早 ↑</option>

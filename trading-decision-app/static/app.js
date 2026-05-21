@@ -1720,6 +1720,7 @@ const DecisionsPage = {
     pinned:     false,
     favorited:  false,
     dateRange:  "all",
+    ticker:     "",          // exact-match ticker filter, "" = all
   },
   search: "",
   sort:   "time-desc",
@@ -1734,6 +1735,7 @@ const DecisionsPage = {
     this.kpiEl     = document.getElementById("decisions-kpi");
     this.searchEl  = document.getElementById("decisions-search");
     this.sortEl    = document.getElementById("decisions-sort");
+    this.tickerEl  = document.getElementById("decisions-ticker-filter");
     if (!this.listEl) return;  // tab not in DOM (older index.html)
 
     // Same belt-and-suspenders anti-autofill stomp the old History tab used:
@@ -1758,6 +1760,12 @@ const DecisionsPage = {
       this.render();
     });
     this.sortEl.addEventListener("change", e => { this.sort = e.target.value; this.render(); });
+    if (this.tickerEl) {
+      this.tickerEl.addEventListener("change", e => {
+        this.filters.ticker = e.target.value || "";
+        this.render();
+      });
+    }
 
     document.getElementById("decisions-new-btn").addEventListener("click", () => showDecisionForm(true));
     document.getElementById("decisions-clear-filters").addEventListener("click", () => this.clearFilters());
@@ -1784,8 +1792,10 @@ const DecisionsPage = {
     this.filters.pinned = false;
     this.filters.favorited = false;
     this.filters.dateRange = "all";
+    this.filters.ticker = "";
     this.search = "";
     if (this.searchEl) this.searchEl.value = "";
+    if (this.tickerEl) this.tickerEl.value = "";
     this.render();
   },
 
@@ -1919,6 +1929,7 @@ const DecisionsPage = {
         const days = { "7d": 7, "30d": 30, "90d": 90 }[f.dateRange] || 0;
         if (now - t > days * 86400 * 1000) return false;
       }
+      if (f.ticker && String(e.ticker || "").toUpperCase() !== f.ticker.toUpperCase()) return false;
       if (this.search) {
         const q = this.search;
         const hay = `${e.ticker} ${e.user_note || ""} ${e.llm_provider || ""} ${e.deep_think_llm || ""}`.toLowerCase();
@@ -1956,6 +1967,7 @@ const DecisionsPage = {
   render() {
     if (!this.listEl) return;
     this.renderKpi();
+    this.renderTickerOptions();
     this.renderFilters();
 
     const items = this._itemsForRender();
@@ -2086,6 +2098,56 @@ const DecisionsPage = {
     // Need to fetch full entry (with runState) to restore the cockpit
     const entry = await History.getEntry(id);
     if (entry) this.openHistorical(entry);
+  },
+
+  /**
+   * Populate the "标的" dropdown above the list. Tickers from Watchlist.cache
+   * are listed first (the user's curated picks, with display names) followed
+   * by any extra tickers that appear in history but aren't on the watchlist.
+   * The selected value is preserved across re-renders.
+   */
+  renderTickerOptions() {
+    if (!this.tickerEl) return;
+    const items = this._allItems();
+    const historyTickers = new Set(items.map(e => String(e.ticker || "").toUpperCase()).filter(Boolean));
+
+    const wlRows = (typeof Watchlist !== "undefined" && Array.isArray(Watchlist.cache)) ? Watchlist.cache : [];
+    const wlSeen = new Set();
+    const wlOpts = [];
+    wlRows.forEach(r => {
+      const t = String(r.ticker || "").toUpperCase();
+      if (!t || wlSeen.has(t)) return;
+      wlSeen.add(t);
+      const name = r.display_name || r.name || "";
+      wlOpts.push({ ticker: t, label: name ? `${t} · ${name}` : t });
+    });
+
+    const extraOpts = [];
+    historyTickers.forEach(t => {
+      if (!wlSeen.has(t)) extraOpts.push({ ticker: t, label: t });
+    });
+    extraOpts.sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+    const current = this.filters.ticker || "";
+    const parts = [`<option value="">全部标的 (${historyTickers.size})</option>`];
+    if (wlOpts.length) {
+      parts.push(`<optgroup label="⭐ 自选">`);
+      wlOpts.forEach(o => {
+        const has = historyTickers.has(o.ticker);
+        const suffix = has ? "" : "（无决策）";
+        parts.push(`<option value="${escapeHtml(o.ticker)}" ${current === o.ticker ? "selected" : ""}>${escapeHtml(o.label)}${suffix}</option>`);
+      });
+      parts.push(`</optgroup>`);
+    }
+    if (extraOpts.length) {
+      parts.push(`<optgroup label="历史决策">`);
+      extraOpts.forEach(o => {
+        parts.push(`<option value="${escapeHtml(o.ticker)}" ${current === o.ticker ? "selected" : ""}>${escapeHtml(o.label)}</option>`);
+      });
+      parts.push(`</optgroup>`);
+    }
+    this.tickerEl.innerHTML = parts.join("");
+    if (current && this.tickerEl.value !== current) this.tickerEl.value = current;
   },
 
   renderKpi() {
@@ -2808,6 +2870,10 @@ const Watchlist = {
       this.cache = this._readLocal();
     }
     this.render();
+    // Keep the Decisions page's "标的" dropdown in sync with the watchlist.
+    if (typeof DecisionsPage !== "undefined" && DecisionsPage.tickerEl) {
+      DecisionsPage.renderTickerOptions();
+    }
 
     // One-time auto-import: if signed-in user has decisions but no watchlist,
     // backfill from history. Guarded so it only runs once per browser.
