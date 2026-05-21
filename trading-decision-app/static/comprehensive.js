@@ -60,6 +60,43 @@
     return `<span class="comp-conv-chip comp-conv-${esc(k)}">${esc(label)}</span>`;
   };
 
+  /**
+   * Map raw provider model IDs to a friendly display label.
+   * Examples: "claude-opus-4-7" → "Claude Opus 4.7", "deepseek-chat" → "DeepSeek V3".
+   * Unknown IDs are returned title-cased with hyphens collapsed.
+   */
+  const _prettyModel = (raw) => {
+    if (!raw) return "";
+    const s = String(raw).trim();
+    if (!s) return "";
+    const direct = {
+      "claude-opus-4-7":     "Claude Opus 4.7",
+      "claude-sonnet-4-6":   "Claude Sonnet 4.6",
+      "claude-haiku-4-5":    "Claude Haiku 4.5",
+      "deepseek-chat":       "DeepSeek V3",
+      "deepseek-reasoner":   "DeepSeek R1",
+      "gpt-5.4-mini":        "GPT-5.4 Mini",
+      "gpt-5.5":             "GPT-5.5",
+      "gemini-3.1-flash":    "Gemini 3.1 Flash",
+      "gemini-3.1-pro":      "Gemini 3.1 Pro",
+      "qwen-plus":           "Qwen Plus",
+      "qwen-max":            "Qwen Max",
+      "moonshot-v1-32k":     "Kimi 32k",
+      "glm-4.7-flash":       "GLM 4.7 Flash",
+    };
+    if (direct[s]) return direct[s];
+    // Generic prettifier as fallback (claude-* → Claude *).
+    const lower = s.toLowerCase();
+    if (lower.startsWith("claude"))   return "Claude " + s.slice(7).replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    if (lower.startsWith("deepseek")) return "DeepSeek " + s.slice(9).replace(/-/g, " ").trim();
+    if (lower.startsWith("gemini"))   return "Gemini " + s.slice(7).replace(/-/g, " ");
+    if (lower.startsWith("gpt"))      return s.toUpperCase().replace(/-/g, " ");
+    if (lower.startsWith("qwen"))     return "Qwen " + s.slice(5).replace(/-/g, " ");
+    if (lower.startsWith("kimi") || lower.startsWith("moonshot")) return "Kimi " + s.replace(/^(kimi|moonshot)-?/i, "");
+    if (lower.startsWith("glm"))      return "GLM " + s.slice(4).replace(/-/g, " ");
+    return s;
+  };
+
   // ---------------- module-level state ----------------------------------
 
   // ticker → { row, history: [], selectedId, progressTimer, startedAt, elapsed }
@@ -81,38 +118,29 @@
       container.dataset.ticker = ticker;
       const st = _getState(ticker);
 
-      // Show skeleton only on the very first render for this ticker.
+      // Show skeleton only on the very first render for this ticker. After
+      // that, we render from the in-memory state immediately and refresh in
+      // the background.
       if (!st.row && !st.history) {
         container.innerHTML = this._skeletonHTML("加载综合报告…");
       }
 
-      let history = [];
-      try {
-        if (window.ComprehensiveReports) {
-          history = await window.ComprehensiveReports.listHistory(ticker, 20) || [];
-        }
-      } catch (e) {
-        console.warn("comp-report listHistory failed", e);
-      }
-
+      // Persistence layer (auth.js) merges Supabase + localStorage and writes
+      // back the merged set, so listHistory is now the single source of truth.
+      const history = await this._refreshHistory(ticker);
       if (container.dataset.ticker !== ticker) return;
+      st.history = history;
 
-      // Merge fetched history with any in-memory placeholder we created
-      // for an in-flight generation (the placeholder may not yet be in
-      // Supabase if the row insert failed).
-      const inflightPlaceholders = (st.history || []).filter(h =>
-        String(h.id || "").startsWith("mem-") && h.status === "generating"
-      );
-      st.history = [...inflightPlaceholders, ...history.filter(h => !inflightPlaceholders.some(p => p.id === h.id))];
-
-      const supaLatest = history[0] || null;
-      if (!st.row || (supaLatest && new Date(supaLatest.generated_at || 0) > new Date(st.row.generated_at || 0))) {
-        st.row = supaLatest;
+      // Pick selected row: preserve user's selection if still valid, else
+      // newest. The latest in-flight "generating" placeholder always wins.
+      const generating = history.find(h => h.status === "generating");
+      if (generating) {
+        st.selectedId = generating.id;
+      } else if (!st.selectedId || !history.find(h => h.id === st.selectedId)) {
+        st.selectedId = history[0]?.id || null;
       }
-      if (!st.selectedId || !st.history.find(h => h.id === st.selectedId)) {
-        st.selectedId = (st.row && st.row.id) || (st.history[0] && st.history[0].id) || null;
-      }
-      const selected = st.history.find(h => h.id === st.selectedId) || st.row;
+      st.row = history.find(h => h.id === st.selectedId) || history[0] || null;
+      const selected = st.row;
 
       container.innerHTML = this._renderHTML(ticker, selected, st);
       this._wire(entry, container, ticker);
@@ -136,7 +164,9 @@
         return null;
       }
 
-      // Insert a "generating" placeholder so the UI knows where we are.
+      // Insert a "generating" placeholder. ComprehensiveReports.markGenerating
+      // always returns a row (Supabase UUID OR local-…); never null since the
+      // 2026-05-23 dual-write rewrite.
       let placeholder = null;
       try {
         if (window.ComprehensiveReports) {
@@ -146,17 +176,22 @@
           });
         }
       } catch (e) { console.warn("comp-report markGenerating failed", e); }
+      if (!placeholder) {
+        // Should never happen, but failsafe.
+        placeholder = {
+          id: "local-mem-" + Date.now().toString(36),
+          ticker: tu, sections: {}, status: "generating",
+          decisions_count: decisions.length,
+          decision_ids: decisions.map(d => d.id),
+          generated_at: new Date().toISOString(),
+        };
+      }
+      const placeholderId = placeholder.id;
 
-      const memPlaceholder = placeholder || {
-        id: "mem-" + Date.now().toString(36),
-        ticker: tu, sections: {}, status: "generating",
-        decisions_count: decisions.length,
-        decision_ids: decisions.map(d => d.id),
-        generated_at: new Date().toISOString(),
-      };
-      st.row = memPlaceholder;
-      st.selectedId = memPlaceholder.id;
-      st.history = [memPlaceholder, ...(st.history || []).filter(h => h.id !== memPlaceholder.id)];
+      // Refresh the visible state.
+      st.history = await this._refreshHistory(tu);
+      st.selectedId = placeholderId;
+      st.row = st.history.find(h => h.id === placeholderId) || placeholder;
       st.startedAt = Date.now();
       st.elapsed = 0;
       this._startProgressTimer(tu);
@@ -184,12 +219,11 @@
 
         if (!resp.ok) {
           const msg = data.error || `HTTP ${resp.status}`;
-          await this._finishWithError(tu, memPlaceholder.id, msg);
+          await this._finishWithError(tu, placeholderId, msg);
           return null;
         }
 
         const report = data.report || {};
-        const finishedAt = new Date().toISOString();
         const fields = {
           sections: report,
           model: data.model || report._model || "",
@@ -198,42 +232,40 @@
           quote_snapshot: quote || {},
           status: "ready",
           error_message: null,
-          generated_at: finishedAt,
+          generated_at: new Date().toISOString(),
         };
 
+        // Patch the placeholder row (dual-write: localStorage + Supabase
+        // best-effort). updateRow ALWAYS persists locally so a refresh now
+        // recovers the finalised content even if Supabase rejects the update.
         let saved = null;
         try {
-          if (window.ComprehensiveReports && memPlaceholder.id && !String(memPlaceholder.id).startsWith("mem-")) {
-            saved = await window.ComprehensiveReports.updateRow(memPlaceholder.id, fields);
+          if (window.ComprehensiveReports) {
+            saved = await window.ComprehensiveReports.updateRow(placeholderId, fields);
           }
         } catch (e) { console.warn("comp-report updateRow failed", e); }
+        if (!saved) saved = { ...placeholder, ...fields };
 
-        const finalRow = saved || { ...memPlaceholder, ...fields };
-        st.row = finalRow;
-        st.selectedId = finalRow.id;
-        st.history = (st.history || []).map(h => h.id === memPlaceholder.id ? finalRow : h);
         this._stopProgressTimer(tu);
-
-        // Refresh history from Supabase so other devices see the new row.
-        try {
-          if (window.ComprehensiveReports) {
-            const fresh = await window.ComprehensiveReports.listHistory(tu, 20);
-            if (fresh && fresh.length) {
-              // Keep the in-memory finalRow at the head if Supabase missed it.
-              const haveMine = fresh.some(h => h.id === finalRow.id || h.generated_at === finalRow.generated_at);
-              st.history = haveMine ? fresh : [finalRow, ...fresh];
-              const matched = st.history.find(h => h.id === finalRow.id)
-                || st.history.find(h => h.generated_at === finalRow.generated_at);
-              if (matched) { st.selectedId = matched.id; st.row = matched; }
-            }
-          }
-        } catch (e) { /* non-fatal */ }
+        st.history = await this._refreshHistory(tu);
+        st.selectedId = saved.id;
+        st.row = st.history.find(h => h.id === saved.id) || saved;
         this._refreshIfVisible(tu);
-        return finalRow;
+        return saved;
       } catch (e) {
-        await this._finishWithError(tu, memPlaceholder.id, String(e));
+        await this._finishWithError(tu, placeholderId, String(e));
         return null;
       }
+    },
+
+    /** Refresh history from the persistence layer (merges Supabase + local). */
+    async _refreshHistory(ticker) {
+      try {
+        if (window.ComprehensiveReports) {
+          return (await window.ComprehensiveReports.listHistory(ticker, 20)) || [];
+        }
+      } catch (e) { console.warn("listHistory failed", e); }
+      return [];
     },
 
     async selectVersion(ticker, versionId) {
@@ -246,15 +278,23 @@
     async togglePinned(ticker, versionId) {
       const tu = (ticker || "").toUpperCase();
       const st = _getState(tu);
-      const cur = (st.history || []).find(h => h.id === versionId);
+      // CRITICAL: persistence-first ordering. The previous "optimistic
+      // in-memory flip → re-render → persist" sequence race-condition'd
+      // itself: re-render's attach() called listHistory(), which read the
+      // un-pinned localStorage state and overwrote our optimistic flag.
+      // Always write to localStorage FIRST, then refresh.
+      const fresh = await this._refreshHistory(tu);
+      const cur = fresh.find(h => h.id === versionId);
       if (!cur) return;
       const newVal = !cur.is_pinned;
-      cur.is_pinned = newVal;
       try {
         if (window.ComprehensiveReports) {
           await window.ComprehensiveReports.setPinned(versionId, newVal);
         }
       } catch (e) { console.warn("setPinned failed", e); }
+      st.history = await this._refreshHistory(tu);
+      const refreshed = st.history.find(h => h.id === versionId);
+      if (refreshed && st.row && st.row.id === versionId) st.row = refreshed;
       this._refreshIfVisible(tu);
     },
 
@@ -267,7 +307,7 @@
           await window.ComprehensiveReports.deleteRow(versionId);
         }
       } catch (e) { console.warn("deleteRow failed", e); }
-      st.history = (st.history || []).filter(h => h.id !== versionId);
+      st.history = await this._refreshHistory(tu);
       if (st.selectedId === versionId) {
         st.selectedId = st.history[0]?.id || null;
         st.row = st.history[0] || null;
@@ -475,7 +515,7 @@
       let buttons = "";
       if (isReady) {
         buttons = `
-          <span class="comp-meta">${row?.decisions_count || 0} 次决策 · ${esc(model || "—")} · ${esc(fmtTimeShort(gen))}</span>
+          <span class="comp-meta">${row?.decisions_count || 0} 次决策${model ? " · " + esc(_prettyModel(model)) : ""} · ${esc(fmtTimeShort(gen))}</span>
           <button class="btn secondary tiny comp-pin-btn" data-pinned="${row?.is_pinned ? "1" : "0"}" title="${row?.is_pinned ? "取消收藏" : "收藏此版本"}">${row?.is_pinned ? "★ 已收藏" : "☆ 收藏"}</button>
           <button class="btn primary tiny comp-regen-btn">⚡ 生成新版本</button>`;
       } else if (isGenerating) {
@@ -517,7 +557,7 @@
               <span class="comp-side-time">${esc(fmtTimeShort(h.generated_at))}</span>
               ${pin ? `<span class="comp-side-pin" title="已收藏">★</span>` : ""}
             </div>
-            <div class="comp-side-meta">${h.decisions_count || 0} 次决策${h.model ? " · " + esc(h.model) : ""}</div>
+            <div class="comp-side-meta">${h.decisions_count || 0} 次决策${h.model ? " · " + esc(_prettyModel(h.model)) : ""}</div>
             ${headline ? `<div class="comp-side-headline">${esc(headline.slice(0, 56))}${headline.length > 56 ? "…" : ""}</div>` : ""}
             <div class="comp-side-actions">
               <button class="comp-side-pin-btn ${h.is_pinned ? "on" : ""}" data-pin-id="${esc(h.id)}" title="${h.is_pinned ? "取消收藏" : "收藏"}">${h.is_pinned ? "★" : "☆"}</button>
@@ -695,7 +735,7 @@
     _footerHTML(row) {
       return `
         <footer class="comp-footer muted">
-          基于 ${row?.decisions_count || 0} 次历史决策综合生成 · ${esc(row?.model || "—")} · ${esc(fmtTime(row?.generated_at))}
+          基于 ${row?.decisions_count || 0} 次历史决策综合生成${row?.model ? " · " + esc(_prettyModel(row.model)) : ""} · ${esc(fmtTime(row?.generated_at))}
         </footer>`;
     },
 

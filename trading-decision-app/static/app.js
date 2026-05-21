@@ -3642,8 +3642,22 @@ const Favorites = {
     });
   },
 
-  /** Render the pinned comprehensive_reports (collected by ComprehensiveReports.listPinned). */
-  _renderCompReports() {
+  /** Render the pinned comprehensive_reports (collected by ComprehensiveReports.listPinned).
+   *  Re-fetches the pinned list every time we render so pin/unpin done on the
+   *  自选 page is reflected immediately without a hard refresh. */
+  async _renderCompReports() {
+    // Refresh the in-memory list from the persistence layer (localStorage +
+    // Supabase merged). Avoid blocking the very first paint — show whatever
+    // we have now, then re-render once the listPinned call returns.
+    try {
+      if (window.ComprehensiveReports) {
+        const fresh = await window.ComprehensiveReports.listPinned(200);
+        if (Array.isArray(fresh)) {
+          this.compReports = fresh;
+          this._updateCounts();
+        }
+      }
+    } catch (e) { console.warn("[favorites] listPinned crash", e); }
     const items = this.compReports || [];
     if (!items.length) {
       this.listEl.innerHTML = `<div class="muted" style="padding:32px; text-align:center;">
@@ -3652,15 +3666,31 @@ const Favorites = {
       </div>`;
       return;
     }
+    // Map raw model IDs ("deepseek-chat", "claude-opus-4-7") to friendly
+    // labels for display. Mirrors _prettyModel in comprehensive.js.
+    const prettyModel = (raw) => {
+      if (!raw) return "";
+      const direct = {
+        "claude-opus-4-7": "Claude Opus 4.7", "claude-sonnet-4-6": "Claude Sonnet 4.6",
+        "claude-haiku-4-5": "Claude Haiku 4.5",
+        "deepseek-chat": "DeepSeek V3", "deepseek-reasoner": "DeepSeek R1",
+        "gpt-5.4-mini": "GPT-5.4 Mini", "gpt-5.5": "GPT-5.5",
+        "gemini-3.1-flash": "Gemini 3.1 Flash", "gemini-3.1-pro": "Gemini 3.1 Pro",
+        "qwen-plus": "Qwen Plus", "qwen-max": "Qwen Max",
+        "moonshot-v1-32k": "Kimi 32k", "glm-4.7-flash": "GLM 4.7 Flash",
+      };
+      return direct[raw] || raw;
+    };
     this.listEl.innerHTML = items.map(r => {
       const headline = r.sections?.meta?.headline || r.sections?.intro?.narrative_shift || "—";
       const ticker = r.ticker || "—";
-      const model = r.model || "—";
+      const model = r.model || "";
       const dc = r.decisions_count || 0;
       const ts = r.generated_at ? new Date(r.generated_at).toLocaleString() : "—";
       const conviction = r.sections?.meta?.conviction
         ? `<span class="fav-comp-conviction conv-${escapeHtml(r.sections.meta.conviction)}">${escapeHtml({high:"高把握",medium:"中等",low:"弱信号"}[r.sections.meta.conviction] || r.sections.meta.conviction)}</span>`
         : "";
+      const modelLabel = model ? `${escapeHtml(prettyModel(model))} · ` : "";
       return `
         <div class="favorite-card fav-comp-card" data-comp-id="${escapeHtml(r.id)}" data-comp-ticker="${escapeHtml(ticker)}">
           <div class="icon">📊</div>
@@ -3668,7 +3698,7 @@ const Favorites = {
             <div class="title">
               <span class="fav-comp-ticker">${escapeHtml(ticker)}</span>
               ${conviction}
-              <span class="muted" style="font-size:11px;">${escapeHtml(model)} · ${dc} 次决策</span>
+              <span class="muted" style="font-size:11px;">${modelLabel}${dc} 次决策</span>
             </div>
             <div class="fav-comp-headline">${escapeHtml(headline)}</div>
             <div class="meta">收藏于 ${escapeHtml(ts)}</div>

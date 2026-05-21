@@ -254,34 +254,31 @@
   };
 
   // -------------------------------------------------- ComprehensiveReports
-  // History-keeping store: each generation = a new row (no upsert). The user
-  // can browse past versions. RLS-scoped by Supabase; falls back to a
-  // localStorage ring buffer when anonymous.
   //
-  // Local storage shape:  { "TICKER": [ row, row, ... newest first ] }
-  // Each "row" mirrors the Supabase row schema (sections, model, status,
-  // generated_at, …) plus a synthetic `id` (local-…). Capped at 20 per ticker.
+  // **Dual-write store** — every report lives in BOTH localStorage and (when
+  // signed in) Supabase. localStorage is the **source of truth for the UI**;
+  // Supabase is a best-effort cross-device sync layer.
+  //
+  // Why: the previous Supabase-first implementation silently lost data when
+  // any write failed (RLS denial, payload size, transient network, missing
+  // column). User saw the report immediately after generation (via in-memory
+  // state) but it vanished on refresh because nothing reached Supabase. This
+  // rewrite makes Supabase failures non-fatal — local data always survives.
+  //
+  // Local shape:  { "TICKER": [ row, ... newest-first ] }
+  // Row schema mirrors the Supabase column set (id, sections, model,
+  // decision_ids, decisions_count, quote_snapshot, status, error_message,
+  // is_pinned, generated_at) plus `user_id` ("local" when anonymous) and
+  // `updated_at`. `id` is a Supabase UUID when sync succeeded, or
+  // `local-…` when it didn't. Capped at 20 versions per ticker (LRU).
   const ComprehensiveReports = {
     LOCAL_KEY: "tda:comp-reports",
     LOCAL_MAX_PER_TICKER: 20,
 
-    _tableMissing: false,
+    _tableMissing:    false,
+    _isPinnedMissing: false,
 
-    // ---- low-level Supabase ↔ localStorage plumbing ---------------------
-    async _supaSelect(builder) {
-      const { data, error } = await builder;
-      if (error) {
-        if (error.code === "42P01" || /relation .* does not exist/i.test(error.message)) {
-          this._tableMissing = true;
-          console.warn("[comp-reports] table missing — run migration 0007 + 0008");
-          return null;
-        }
-        console.error("[comp-reports]", error);
-        return null;
-      }
-      return data;
-    },
-
+    // ---- localStorage primitives ---------------------------------------
     _readLocal() {
       try { return JSON.parse(localStorage.getItem(this.LOCAL_KEY) || "{}"); }
       catch { return {}; }
@@ -289,88 +286,163 @@
 
     _writeLocal(all) {
       try { localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all)); return true; }
-      catch (e) { console.warn("comp-reports local save failed", e); return false; }
+      catch (e) {
+        // Quota exceeded — trim each ticker's history aggressively and retry.
+        try {
+          const trimmed = {};
+          for (const k of Object.keys(all)) trimmed[k] = (all[k] || []).slice(0, 5);
+          localStorage.setItem(this.LOCAL_KEY, JSON.stringify(trimmed));
+          return true;
+        } catch (e2) { console.warn("[comp-reports] local quota", e2); return false; }
+      }
     },
 
-    _localPush(ticker, row) {
+    _newLocalId() {
+      return "local-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    },
+
+    /** Insert-or-patch a row by id, then sort+trim the bucket. */
+    _putRow(ticker, row) {
       const all = this._readLocal();
-      const tu = (ticker || "").toUpperCase();
-      const list = all[tu] || [];
-      list.unshift(row);
+      const tu = (ticker || row.ticker || "").toUpperCase();
+      let list = all[tu] || [];
+      const idx = list.findIndex(r => r.id === row.id);
+      if (idx >= 0) list[idx] = { ...list[idx], ...row };
+      else          list.unshift(row);
+      list.sort((a, b) => new Date(b.generated_at || 0) - new Date(a.generated_at || 0));
       if (list.length > this.LOCAL_MAX_PER_TICKER) list.length = this.LOCAL_MAX_PER_TICKER;
       all[tu] = list;
       this._writeLocal(all);
-      return row;
+      return list[Math.max(0, list.findIndex(r => r.id === row.id))];
     },
 
-    _localPatch(id, patch) {
+    _delRow(id) {
       const all = this._readLocal();
+      let removed = false;
       for (const tu of Object.keys(all)) {
-        const list = all[tu] || [];
-        const i = list.findIndex(r => r.id === id);
-        if (i >= 0) {
-          list[i] = { ...list[i], ...patch, updated_at: new Date().toISOString() };
-          this._writeLocal(all);
-          return list[i];
+        const before = (all[tu] || []).length;
+        all[tu] = (all[tu] || []).filter(r => r.id !== id);
+        if (all[tu].length !== before) removed = true;
+      }
+      if (removed) this._writeLocal(all);
+      return removed;
+    },
+
+    // ---- Supabase plumbing (all best-effort, ALL handle schema drift) ---
+    _haveSupa() { return Boolean(client && session); },
+
+    async _supaSelect(builder) {
+      try {
+        const { data, error } = await builder;
+        if (error) {
+          if (error.code === "42P01" || /relation .* does not exist/i.test(error.message || "")) {
+            this._tableMissing = true;
+            console.warn("[comp-reports] table missing — run migrations 0007+0008. Using localStorage only.");
+            return null;
+          }
+          if (/column .*is_pinned.* does not exist/i.test(error.message || "")) {
+            this._isPinnedMissing = true;
+            console.warn("[comp-reports] is_pinned column missing — run migration 0008. Pin/listPinned will use localStorage only.");
+            return null;
+          }
+          console.error("[comp-reports] select", error);
+          return null;
         }
+        return data || [];
+      } catch (e) {
+        console.warn("[comp-reports] select crash", e);
+        return null;
       }
-      return null;
     },
 
-    // ---- public API -----------------------------------------------------
-
-    /** Latest ready/generating/error row for a ticker (one record). */
-    async getLatest(ticker) {
-      const tu = (ticker || "").toUpperCase();
-      if (!client || !session) {
-        const all = this._readLocal();
-        return (all[tu] || [])[0] || null;
-      }
-      const data = await this._supaSelect(
-        client.from("comprehensive_reports").select("*")
-          .eq("user_id", session.user.id).eq("ticker", tu)
-          .order("generated_at", { ascending: false }).limit(1)
-      );
-      return (data && data[0]) || null;
+    async _supaInsert(row) {
+      const payload = this._isPinnedMissing ? (() => { const { is_pinned, ...rest } = row; return rest; })() : row;
+      try {
+        const { data, error } = await client.from("comprehensive_reports").insert(payload).select().single();
+        if (error) {
+          if (error.code === "42P01" || /relation .* does not exist/i.test(error.message || "")) {
+            this._tableMissing = true;
+            console.warn("[comp-reports] insert: table missing");
+            return null;
+          }
+          if (/column .*is_pinned.* does not exist/i.test(error.message || "")) {
+            this._isPinnedMissing = true;
+            const { is_pinned, ...rest } = row;
+            const r2 = await client.from("comprehensive_reports").insert(rest).select().single();
+            if (r2.error) { console.error("[comp-reports] insert retry", r2.error); return null; }
+            return r2.data;
+          }
+          console.error("[comp-reports] insert", error);
+          return null;
+        }
+        return data;
+      } catch (e) { console.warn("[comp-reports] insert crash", e); return null; }
     },
 
-    /** Back-compat alias used by older callers — same as getLatest. */
-    async get(ticker) { return this.getLatest(ticker); },
+    async _supaUpdate(id, patch) {
+      const payload = this._isPinnedMissing ? (() => { const { is_pinned, ...rest } = patch; return rest; })() : patch;
+      try {
+        const { data, error } = await client.from("comprehensive_reports").update(payload).eq("id", id).select().maybeSingle();
+        if (error) {
+          if (/column .*is_pinned.* does not exist/i.test(error.message || "")) {
+            this._isPinnedMissing = true;
+            const { is_pinned, ...rest } = patch;
+            const r2 = await client.from("comprehensive_reports").update(rest).eq("id", id).select().maybeSingle();
+            return r2.data || null;
+          }
+          console.error("[comp-reports] update", error);
+          return null;
+        }
+        return data;  // null when 0 rows matched (RLS / stale id) — that's OK.
+      } catch (e) { console.warn("[comp-reports] update crash", e); return null; }
+    },
 
-    /** Full history for a ticker, newest first. */
-    async listHistory(ticker, limit = 20) {
+    /** Pull Supabase rows for a ticker into localStorage cache. Merging
+     *  rules: Supabase wins for rows present in both unless local is newer;
+     *  local-only rows (id starts "local-") are preserved; Supabase rows not
+     *  in local are added; rows missing from Supabase but present locally
+     *  with a non-"local-" id are KEPT (we may have just inserted them and
+     *  PostgREST may not see them yet on the next request). */
+    async _syncSupaForTicker(ticker, limit = 20) {
+      if (!this._haveSupa() || this._tableMissing) return;
       const tu = (ticker || "").toUpperCase();
-      if (!client || !session) {
-        const all = this._readLocal();
-        return (all[tu] || []).slice(0, limit);
-      }
       const data = await this._supaSelect(
         client.from("comprehensive_reports").select("*")
           .eq("user_id", session.user.id).eq("ticker", tu)
           .order("generated_at", { ascending: false }).limit(limit)
       );
-      return data || [];
-    },
-
-    async getById(id) {
-      if (!client || !session) {
-        const all = this._readLocal();
-        for (const tu of Object.keys(all)) {
-          const hit = (all[tu] || []).find(r => r.id === id);
-          if (hit) return hit;
+      if (!Array.isArray(data)) return;
+      const all = this._readLocal();
+      const existing = all[tu] || [];
+      const byId = new Map();
+      for (const r of data) byId.set(r.id, r);
+      const merged = [];
+      for (const local of existing) {
+        if (byId.has(local.id)) {
+          const remote = byId.get(local.id);
+          const lU = new Date(local.updated_at || local.generated_at || 0).getTime();
+          const rU = new Date(remote.updated_at || remote.generated_at || 0).getTime();
+          merged.push(rU >= lU ? remote : { ...remote, ...local });
+          byId.delete(local.id);
+        } else {
+          // Keep local rows that Supabase didn't return — they might be
+          // local-only OR just-inserted-and-not-yet-visible.
+          merged.push(local);
         }
-        return null;
       }
-      const data = await this._supaSelect(
-        client.from("comprehensive_reports").select("*").eq("id", id).limit(1)
-      );
-      return (data && data[0]) || null;
+      for (const remoteOnly of byId.values()) merged.push(remoteOnly);
+      merged.sort((a, b) => new Date(b.generated_at || 0) - new Date(a.generated_at || 0));
+      all[tu] = merged.slice(0, this.LOCAL_MAX_PER_TICKER);
+      this._writeLocal(all);
     },
 
-    /** Insert a brand-new version row. Returns the inserted row (with id). */
+    // ---- public API ----------------------------------------------------
+
+    /** Insert a brand-new row. Always returns a usable row (Supabase UUID
+     *  if sync succeeded, else `local-…`). */
     async insert(ticker, payload) {
       const tu = (ticker || "").toUpperCase();
-      const row = {
+      const baseRow = {
         ticker: tu,
         sections: payload.sections || {},
         model: payload.model || null,
@@ -382,57 +454,46 @@
         is_pinned: !!payload.is_pinned,
         generated_at: payload.generated_at || new Date().toISOString(),
       };
-      if (!client || !session) {
-        const local = {
-          ...row,
-          id: "local-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-          user_id: "local",
-          updated_at: new Date().toISOString(),
-        };
-        return this._localPush(tu, local);
+      let realRow = null;
+      if (this._haveSupa() && !this._tableMissing) {
+        realRow = await this._supaInsert({ ...baseRow, user_id: session.user.id });
       }
-      const { data, error } = await client
-        .from("comprehensive_reports")
-        .insert({ ...row, user_id: session.user.id })
-        .select()
-        .single();
-      if (error) {
-        if (error.code === "42P01" || /relation .* does not exist/i.test(error.message)) {
-          this._tableMissing = true;
-          console.warn("[comp-reports] table missing — run migration 0007 + 0008. Falling back to localStorage.");
-          const local = {
-            ...row, id: "local-" + Date.now().toString(36), user_id: "local",
-            updated_at: new Date().toISOString(),
-          };
-          return this._localPush(tu, local);
-        }
-        if (/column .*is_pinned.* does not exist/i.test(error.message || "")) {
-          console.warn("[comp-reports] is_pinned column missing — run migration 0008. Retrying without it.");
-          const { is_pinned, ...rest } = row;
-          const r2 = await client.from("comprehensive_reports").insert({ ...rest, user_id: session.user.id }).select().single();
-          if (r2.error) { console.error("[comp-reports] insert retry", r2.error); return null; }
-          return r2.data;
-        }
-        console.error("[comp-reports] insert", error);
-        return null;
-      }
-      return data;
+      const localRow = realRow
+        ? { ...realRow, updated_at: realRow.updated_at || new Date().toISOString() }
+        : { ...baseRow, id: this._newLocalId(), user_id: "local", updated_at: new Date().toISOString() };
+      return this._putRow(tu, localRow);
     },
 
-    /** Patch one row by id (status, sections, error_message, is_pinned, …). */
+    /** Patch a row by id. localStorage updates synchronously; Supabase sync
+     *  is fire-and-forget. Returns the patched local row. */
     async updateRow(id, patch) {
       if (!id) return null;
-      if (!client || !session || String(id).startsWith("local-")) {
-        return this._localPatch(id, patch);
+      const all = this._readLocal();
+      let touched = null;
+      let touchedTicker = null;
+      for (const tu of Object.keys(all)) {
+        const list = all[tu] || [];
+        const idx = list.findIndex(r => r.id === id);
+        if (idx >= 0) {
+          list[idx] = { ...list[idx], ...patch, updated_at: new Date().toISOString() };
+          all[tu] = list;
+          touched = list[idx];
+          touchedTicker = tu;
+          break;
+        }
       }
-      const { data, error } = await client
-        .from("comprehensive_reports")
-        .update(patch)
-        .eq("id", id)
-        .select()
-        .single();
-      if (error) { console.error("[comp-reports] update", error); return null; }
-      return data;
+      if (touched) this._writeLocal(all);
+      // Supabase sync — best-effort, awaited so callers can rely on at least
+      // local state being final.
+      if (this._haveSupa() && !this._tableMissing && !String(id).startsWith("local-")) {
+        try {
+          const remote = await this._supaUpdate(id, patch);
+          if (remote && touched) {
+            this._putRow(touchedTicker, { ...touched, ...remote });
+          }
+        } catch (e) { /* non-fatal */ }
+      }
+      return touched;
     },
 
     async setPinned(id, pinned) {
@@ -441,45 +502,71 @@
 
     async deleteRow(id) {
       if (!id) return false;
-      if (!client || !session || String(id).startsWith("local-")) {
-        const all = this._readLocal();
-        for (const tu of Object.keys(all)) {
-          const before = (all[tu] || []).length;
-          all[tu] = (all[tu] || []).filter(r => r.id !== id);
-          if (all[tu].length !== before) { this._writeLocal(all); return true; }
-        }
-        return false;
+      const removed = this._delRow(id);
+      if (this._haveSupa() && !this._tableMissing && !String(id).startsWith("local-")) {
+        try { await client.from("comprehensive_reports").delete().eq("id", id); }
+        catch (e) { /* non-fatal */ }
       }
-      const { error } = await client.from("comprehensive_reports").delete().eq("id", id);
-      if (error) { console.error("[comp-reports] delete", error); return false; }
-      return true;
+      return removed;
     },
 
-    /** Convenience used by the UI to create a "generating" placeholder. */
     async markGenerating(ticker, payload = {}) {
       return this.insert(ticker, { ...payload, sections: {}, status: "generating" });
     },
 
-    /** All pinned (★) versions across all tickers, newest first. Used by
-     *  the "收藏" page. */
-    async listPinned(limit = 200) {
-      if (!client || !session) {
-        const all = this._readLocal();
-        const out = [];
-        for (const tu of Object.keys(all)) {
-          for (const r of (all[tu] || [])) {
-            if (r.is_pinned) out.push(r);
-          }
-        }
-        out.sort((a, b) => new Date(b.generated_at || 0) - new Date(a.generated_at || 0));
-        return out.slice(0, limit);
+    /** Latest row for a ticker (after syncing from Supabase). */
+    async getLatest(ticker) {
+      const list = await this.listHistory(ticker, 1);
+      return list[0] || null;
+    },
+
+    /** Back-compat alias. */
+    async get(ticker) { return this.getLatest(ticker); },
+
+    /** Newest-first version list for a ticker. ALWAYS reads from localStorage
+     *  (after merging in any newer Supabase rows). */
+    async listHistory(ticker, limit = 20) {
+      const tu = (ticker || "").toUpperCase();
+      await this._syncSupaForTicker(tu, limit);
+      const all = this._readLocal();
+      return (all[tu] || []).slice(0, limit);
+    },
+
+    async getById(id) {
+      const all = this._readLocal();
+      for (const tu of Object.keys(all)) {
+        const hit = (all[tu] || []).find(r => r.id === id);
+        if (hit) return hit;
       }
-      const data = await this._supaSelect(
-        client.from("comprehensive_reports").select("*")
-          .eq("user_id", session.user.id).eq("is_pinned", true)
-          .order("generated_at", { ascending: false }).limit(limit)
-      );
-      return data || [];
+      if (!this._haveSupa() || this._tableMissing) return null;
+      const data = await this._supaSelect(client.from("comprehensive_reports").select("*").eq("id", id).limit(1));
+      return (data && data[0]) || null;
+    },
+
+    /** All pinned versions across all tickers — used by the 收藏 page. */
+    async listPinned(limit = 200) {
+      // Step 1: sync each known ticker from Supabase so the local cache reflects
+      // recent changes (other tabs / other devices).
+      if (this._haveSupa() && !this._tableMissing) {
+        // Pull every pinned row in one query and merge ticker-by-ticker.
+        const data = await this._supaSelect(
+          client.from("comprehensive_reports").select("*")
+            .eq("user_id", session.user.id)
+            .eq("is_pinned", true)
+            .order("generated_at", { ascending: false }).limit(limit)
+        );
+        if (Array.isArray(data)) {
+          for (const r of data) this._putRow(r.ticker, { ...r, updated_at: r.updated_at || new Date().toISOString() });
+        }
+      }
+      // Step 2: read pinned rows from localStorage (now merged).
+      const all = this._readLocal();
+      const out = [];
+      for (const tu of Object.keys(all)) {
+        for (const r of (all[tu] || [])) if (r.is_pinned) out.push(r);
+      }
+      out.sort((a, b) => new Date(b.generated_at || 0) - new Date(a.generated_at || 0));
+      return out.slice(0, limit);
     },
   };
 
