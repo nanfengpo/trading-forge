@@ -3443,6 +3443,7 @@ const HistoryPage = {
 const Favorites = {
   LOCAL_KEY: "tda:favorites",
   cache: [],
+  compReports: [],   // pinned `comprehensive_reports` rows (Supabase + localStorage)
   activeTab: "strategy",
 
   init() {
@@ -3473,6 +3474,16 @@ const Favorites = {
     } else {
       try { this.cache = JSON.parse(localStorage.getItem(this.LOCAL_KEY) || "[]"); }
       catch { this.cache = []; }
+    }
+    // Pinned comprehensive reports live in their OWN table (RLS-scoped); load
+    // them in parallel so the 收藏 page can render them in the 综合报告 tab.
+    try {
+      this.compReports = window.ComprehensiveReports
+        ? (await window.ComprehensiveReports.listPinned(200)) || []
+        : [];
+    } catch (e) {
+      console.warn("[favorites] listPinned failed", e);
+      this.compReports = [];
     }
     this.render();
     this._updateCounts();
@@ -3529,17 +3540,27 @@ const Favorites = {
     document.getElementById("fav-count-decision").textContent    = this.cache.filter(f => f.kind === "decision").length;
     const oppEl = document.getElementById("fav-count-opportunity");
     if (oppEl) oppEl.textContent = this.cache.filter(f => f.kind === "opportunity").length;
+    const compEl = document.getElementById("fav-count-comp-report");
+    if (compEl) compEl.textContent = this.compReports.length;
     const stat = document.getElementById("stat-favorites");
-    if (stat) stat.textContent = this.cache.length;
+    if (stat) stat.textContent = this.cache.length + this.compReports.length;
   },
 
   render() {
+    // Special branch: comp_report lives in its own table (comprehensive_reports
+    // where is_pinned=true), not in the favorites table.
+    if (this.activeTab === "comp_report") {
+      this._renderCompReports();
+      return;
+    }
     const items = this.cache.filter(f => f.kind === this.activeTab);
     if (!items.length) {
-      this.listEl.innerHTML = `<div class="muted" style="padding:32px; text-align:center;">${
-        this.activeTab === "strategy" ? "未收藏任何策略。在策略库点击 ★ 添加。"
-                                      : "未收藏任何决策。在历史决策右键添加。"
-      }</div>`;
+      const emptyMsg = {
+        strategy:    "未收藏任何策略。在策略库点击 ★ 添加。",
+        decision:    "未收藏任何决策。在历史决策右键添加。",
+        opportunity: "未收藏任何机会。在 24h 机会卡片右上角点 ★ 添加。",
+      }[this.activeTab] || "未收藏任何项。";
+      this.listEl.innerHTML = `<div class="muted" style="padding:32px; text-align:center;">${emptyMsg}</div>`;
       return;
     }
     if (this.activeTab === "strategy") {
@@ -3619,6 +3640,100 @@ const Favorites = {
         await Favorites.remove(btn.dataset.unfavKind, btn.dataset.unfavRef);
       });
     });
+  },
+
+  /** Render the pinned comprehensive_reports (collected by ComprehensiveReports.listPinned). */
+  _renderCompReports() {
+    const items = this.compReports || [];
+    if (!items.length) {
+      this.listEl.innerHTML = `<div class="muted" style="padding:32px; text-align:center;">
+        还没有收藏任何综合报告。<br>
+        <span style="font-size:12px;">在「⭐ 自选」页面打开某个标的，点击综合报告右上角的「☆ 收藏」按钮即可加入此处。</span>
+      </div>`;
+      return;
+    }
+    this.listEl.innerHTML = items.map(r => {
+      const headline = r.sections?.meta?.headline || r.sections?.intro?.narrative_shift || "—";
+      const ticker = r.ticker || "—";
+      const model = r.model || "—";
+      const dc = r.decisions_count || 0;
+      const ts = r.generated_at ? new Date(r.generated_at).toLocaleString() : "—";
+      const conviction = r.sections?.meta?.conviction
+        ? `<span class="fav-comp-conviction conv-${escapeHtml(r.sections.meta.conviction)}">${escapeHtml({high:"高把握",medium:"中等",low:"弱信号"}[r.sections.meta.conviction] || r.sections.meta.conviction)}</span>`
+        : "";
+      return `
+        <div class="favorite-card fav-comp-card" data-comp-id="${escapeHtml(r.id)}" data-comp-ticker="${escapeHtml(ticker)}">
+          <div class="icon">📊</div>
+          <div class="info">
+            <div class="title">
+              <span class="fav-comp-ticker">${escapeHtml(ticker)}</span>
+              ${conviction}
+              <span class="muted" style="font-size:11px;">${escapeHtml(model)} · ${dc} 次决策</span>
+            </div>
+            <div class="fav-comp-headline">${escapeHtml(headline)}</div>
+            <div class="meta">收藏于 ${escapeHtml(ts)}</div>
+          </div>
+          <button class="unfav" data-unpin-comp="${escapeHtml(r.id)}">取消收藏</button>
+        </div>`;
+    }).join("");
+    // Click a card → switch to 自选, select that ticker, switch to that version.
+    this.listEl.querySelectorAll(".fav-comp-card").forEach(card => {
+      card.addEventListener("click", async ev => {
+        if (ev.target.dataset.unpinComp) return;
+        const ticker = card.dataset.compTicker;
+        const compId = card.dataset.compId;
+        await Favorites._openCompReport(ticker, compId);
+      });
+    });
+    this.listEl.querySelectorAll("[data-unpin-comp]").forEach(btn => {
+      btn.addEventListener("click", async ev => {
+        ev.stopPropagation();
+        const id = btn.dataset.unpinComp;
+        if (window.ComprehensiveReports) {
+          await window.ComprehensiveReports.setPinned(id, false);
+        }
+        await Favorites.refresh();
+      });
+    });
+  },
+
+  /** Navigate from the favorites page to a specific comp report. */
+  async _openCompReport(ticker, versionId) {
+    const tu = (ticker || "").toUpperCase();
+    if (!tu) return;
+    // 1) Switch to 自选 tab.
+    const wlTabBtn = document.querySelector('nav.tabs button[data-tab="watchlist"]');
+    if (wlTabBtn) wlTabBtn.click();
+    // 2) Find or auto-add the watchlist entry for this ticker.
+    const wl = window._appWatchlist || (typeof Watchlist !== "undefined" ? Watchlist : null);
+    if (!wl) return;
+    let entry = (wl.cache || []).find(e => (e.ticker || "").toUpperCase() === tu);
+    if (!entry) {
+      // The user pinned a report for a ticker they later removed. Re-add it
+      // silently so we can render. (Local-only when anonymous.)
+      try {
+        if (window.Watchlist && window.Auth?.isSignedIn?.()) {
+          const r = await window.Watchlist.add({ ticker: tu });
+          if (r && r.row) entry = r.row;
+        }
+      } catch (e) { /* non-fatal */ }
+      if (!entry) {
+        // Synthesise a local entry so the panel can render.
+        entry = { id: "fav-" + tu, ticker: tu, display_name: null, market: wl._detectMarket?.(tu) || "other" };
+        wl.cache = [entry, ...(wl.cache || [])];
+      }
+    }
+    // 3) Select the entry and pre-set the comp-report version.
+    if (window.ComprehensiveReport) {
+      await window.ComprehensiveReport.selectVersion(tu, versionId);
+    }
+    wl.selectedId = entry.id;
+    if (typeof wl.render === "function") wl.render();
+    // 4) Scroll the comp block into view after the panel re-renders.
+    setTimeout(() => {
+      const mount = document.querySelector(`.wl-comp-mount[data-ticker="${tu}"], .wl-comp-mount`);
+      if (mount) mount.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 150);
   },
 };
 

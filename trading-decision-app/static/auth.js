@@ -459,6 +459,28 @@
     async markGenerating(ticker, payload = {}) {
       return this.insert(ticker, { ...payload, sections: {}, status: "generating" });
     },
+
+    /** All pinned (★) versions across all tickers, newest first. Used by
+     *  the "收藏" page. */
+    async listPinned(limit = 200) {
+      if (!client || !session) {
+        const all = this._readLocal();
+        const out = [];
+        for (const tu of Object.keys(all)) {
+          for (const r of (all[tu] || [])) {
+            if (r.is_pinned) out.push(r);
+          }
+        }
+        out.sort((a, b) => new Date(b.generated_at || 0) - new Date(a.generated_at || 0));
+        return out.slice(0, limit);
+      }
+      const data = await this._supaSelect(
+        client.from("comprehensive_reports").select("*")
+          .eq("user_id", session.user.id).eq("is_pinned", true)
+          .order("generated_at", { ascending: false }).limit(limit)
+      );
+      return data || [];
+    },
   };
 
   window.Auth = Auth;

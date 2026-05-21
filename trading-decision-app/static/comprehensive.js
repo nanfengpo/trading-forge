@@ -407,14 +407,14 @@
       const isError = status === "error";
 
       const history = (st && st.history) || [];
-      const hasHistory = history.length > 1;
+      const hasHistory = history.length >= 1;  // show sidebar whenever there's ≥1 version
 
-      const head = this._headHTML(ticker, row, isReady, isGenerating, isError, history, hasHistory, st);
+      const head = this._headHTML(ticker, row, isReady, isGenerating, isError, st);
 
-      let body;
+      let mainBody;
       if (isGenerating) {
         const elapsed = st?.elapsed != null ? st.elapsed : 0;
-        body = `
+        mainBody = `
           <div class="comp-progress">
             <div class="comp-progress-bar"><div class="comp-progress-bar-fill"></div></div>
             <div class="comp-progress-text">
@@ -432,7 +432,7 @@
             </div>
           </div>`;
       } else if (isReady) {
-        body = `
+        mainBody = `
           ${this._headlineHTML(sections.meta || {}, sections.intro || {}, ticker)}
           ${this._introHTML(sections.intro || {})}
           ${this._dimensionsHTML(sections.dimensions || {})}
@@ -442,50 +442,51 @@
         `;
       } else if (isError) {
         const errMsg = row?.error_message || "未知错误";
-        body = `<div class="comp-empty comp-error-detail">
+        mainBody = `<div class="comp-empty comp-error-detail">
           <div class="comp-error-icon">⚠</div>
           <p><strong>生成综合报告失败</strong></p>
           <pre class="comp-error-msg">${esc(errMsg)}</pre>
           <p class="muted" style="font-size:12px;">点击右上角「↻ 重试」再试一次。如多次失败，请检查 fly logs 或 LLM API Key 配置。</p>
         </div>`;
       } else {
-        body = `<div class="comp-empty">
+        mainBody = `<div class="comp-empty">
           <p>还没有为 <strong>${esc(ticker)}</strong> 生成综合报告。</p>
-          <p class="muted" style="font-size:12px;">点击右上角「⚡ 生成综合报告」即可基于该标的的全部历史决策生成一份多维度研究档案。</p>
+          <p class="muted" style="font-size:12px;">点击右上角「⚡ 生成综合报告」即可基于该标的的全部历史决策生成一份多维度研究档案（默认使用 Claude Opus 4.7）。</p>
         </div>`;
       }
+
+      // Sidebar (history) + main pane two-column layout. Sidebar always present
+      // when the user has at least 1 version, so they can pin / delete even an
+      // in-flight or errored one.
+      const body = hasHistory
+        ? `<div class="comp-body-grid">
+             ${this._sidebarHTML(ticker, history, row?.id)}
+             <div class="comp-main">${mainBody}</div>
+           </div>`
+        : `<div class="comp-main">${mainBody}</div>`;
 
       return `<div class="comp-block" data-status="${esc(status)}">${head}${body}</div>`;
     },
 
-    _headHTML(ticker, row, isReady, isGenerating, isError, history, hasHistory, st) {
+    _headHTML(ticker, row, isReady, isGenerating, isError, st) {
       const model = row?.model;
       const gen = row?.generated_at;
-
-      const historyDropdown = hasHistory
-        ? this._historyDropdownHTML(ticker, history, row?.id)
-        : "";
 
       let buttons = "";
       if (isReady) {
         buttons = `
           <span class="comp-meta">${row?.decisions_count || 0} 次决策 · ${esc(model || "—")} · ${esc(fmtTimeShort(gen))}</span>
-          ${historyDropdown}
-          <button class="btn secondary tiny comp-pin-btn" data-pinned="${row?.is_pinned ? "1" : "0"}" title="收藏此版本">${row?.is_pinned ? "★" : "☆"}</button>
+          <button class="btn secondary tiny comp-pin-btn" data-pinned="${row?.is_pinned ? "1" : "0"}" title="${row?.is_pinned ? "取消收藏" : "收藏此版本"}">${row?.is_pinned ? "★ 已收藏" : "☆ 收藏"}</button>
           <button class="btn primary tiny comp-regen-btn">⚡ 生成新版本</button>`;
       } else if (isGenerating) {
-        buttons = `
-          <span class="comp-status-pill comp-pill-gen">⚡ 生成中 · <span class="comp-elapsed">${st?.elapsed || 0}s</span></span>
-          ${historyDropdown}`;
+        buttons = `<span class="comp-status-pill comp-pill-gen">⚡ 生成中 · <span class="comp-elapsed">${st?.elapsed || 0}s</span></span>`;
       } else if (isError) {
         buttons = `
           <span class="comp-status-pill comp-pill-err">⚠ 失败</span>
-          ${historyDropdown}
           <button class="btn primary tiny comp-regen-btn">↻ 重试</button>`;
       } else {
         buttons = `
           <span class="comp-status-pill comp-pill-empty">尚未生成</span>
-          ${historyDropdown}
           <button class="btn primary tiny comp-regen-btn">⚡ 生成综合报告</button>`;
       }
 
@@ -496,18 +497,39 @@
         </div>`;
     },
 
-    _historyDropdownHTML(ticker, history, selectedId) {
+    _sidebarHTML(ticker, history, selectedId) {
       const items = history.map(h => {
         const sel = h.id === selectedId ? " selected" : "";
-        const pin = h.is_pinned ? "★ " : "";
-        const stat =
+        const pin = h.is_pinned ? "★" : "";
+        const statIcon =
           h.status === "ready" ? "✓" :
           h.status === "generating" ? "⚡" :
           h.status === "error" ? "⚠" : "·";
-        const label = `${pin}${stat} ${fmtTimeShort(h.generated_at)} · ${h.decisions_count || 0} 次决策${h.model ? " · " + h.model : ""}`;
-        return `<option value="${esc(h.id)}"${sel}>${esc(label)}</option>`;
+        const statCls =
+          h.status === "ready" ? "comp-side-stat-ok" :
+          h.status === "generating" ? "comp-side-stat-gen" :
+          h.status === "error" ? "comp-side-stat-err" : "";
+        const headline = h.sections?.meta?.headline || h.sections?.intro?.narrative_shift || "";
+        return `
+          <li class="comp-side-item${sel}" data-version-id="${esc(h.id)}">
+            <div class="comp-side-row">
+              <span class="comp-side-stat ${statCls}">${statIcon}</span>
+              <span class="comp-side-time">${esc(fmtTimeShort(h.generated_at))}</span>
+              ${pin ? `<span class="comp-side-pin" title="已收藏">★</span>` : ""}
+            </div>
+            <div class="comp-side-meta">${h.decisions_count || 0} 次决策${h.model ? " · " + esc(h.model) : ""}</div>
+            ${headline ? `<div class="comp-side-headline">${esc(headline.slice(0, 56))}${headline.length > 56 ? "…" : ""}</div>` : ""}
+            <div class="comp-side-actions">
+              <button class="comp-side-pin-btn ${h.is_pinned ? "on" : ""}" data-pin-id="${esc(h.id)}" title="${h.is_pinned ? "取消收藏" : "收藏"}">${h.is_pinned ? "★" : "☆"}</button>
+              <button class="comp-side-del-btn" data-del-id="${esc(h.id)}" title="删除此版本">🗑</button>
+            </div>
+          </li>`;
       }).join("");
-      return `<select class="comp-history-select" title="查看历史版本">${items}</select>`;
+      return `
+        <aside class="comp-sidebar">
+          <div class="comp-sidebar-head">📜 历史版本 <span class="comp-sidebar-count">${history.length}</span></div>
+          <ul class="comp-sidebar-list">${items}</ul>
+        </aside>`;
     },
 
     _headlineHTML(meta, intro, ticker) {
@@ -696,13 +718,27 @@
           await this.togglePinned(ticker, st.selectedId);
         });
       }
-      const hist = container.querySelector(".comp-history-select");
-      if (hist) {
-        hist.addEventListener("change", (ev) => {
+      // Sidebar: click a version row → switch; pin / delete buttons.
+      container.querySelectorAll(".comp-side-item").forEach(li => {
+        li.addEventListener("click", (ev) => {
+          // Ignore clicks that started on a button — let those handlers run.
+          if (ev.target.closest(".comp-side-pin-btn, .comp-side-del-btn")) return;
           ev.stopPropagation();
-          this.selectVersion(ticker, hist.value);
+          this.selectVersion(ticker, li.dataset.versionId);
         });
-      }
+      });
+      container.querySelectorAll(".comp-side-pin-btn").forEach(b => {
+        b.addEventListener("click", async (ev) => {
+          ev.stopPropagation();
+          await this.togglePinned(ticker, b.dataset.pinId);
+        });
+      });
+      container.querySelectorAll(".comp-side-del-btn").forEach(b => {
+        b.addEventListener("click", async (ev) => {
+          ev.stopPropagation();
+          await this.deleteVersion(ticker, b.dataset.delId);
+        });
+      });
     },
   };
 

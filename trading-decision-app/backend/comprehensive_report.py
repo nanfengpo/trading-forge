@@ -46,9 +46,19 @@ _OPENAI_COMPAT: Dict[str, Dict[str, str]] = {
     "google":    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "env": "GOOGLE_API_KEY",   "default_model": "gemini-3.1-flash"},
 }
 
-_ANTHROPIC_CFG = {"env": "ANTHROPIC_API_KEY", "default_model": "claude-sonnet-4-6"}
+# NB: comp-report always wants the strongest available reasoning model — the
+# user's decision pipeline may run on a cheap quick-LLM, but here we synthesise
+# many decisions into one definitive research dossier, so we default to
+# Claude Opus 4.7 (the current flagship) whenever ANTHROPIC_API_KEY is set.
+_ANTHROPIC_CFG = {"env": "ANTHROPIC_API_KEY", "default_model": "claude-opus-4-7"}
 
 _FALLBACK_ORDER = ["anthropic", "deepseek", "glm", "qwen", "google", "kimi", "openai"]
+
+# Force anthropic to the head whenever its key is set — overrides whatever
+# `llm_provider` the frontend passes (the user runs decisions on cheap models
+# but wants the synthesis on Opus). Set COMPREHENSIVE_REPORT_PROVIDER=user to
+# disable this behaviour and honor the user's preference instead.
+_FORCE_BEST_MODEL = os.environ.get("COMPREHENSIVE_REPORT_PROVIDER", "best").lower() != "user"
 
 
 def _provider_env(name: str) -> Optional[str]:
@@ -68,7 +78,12 @@ def _provider_default_model(name: str) -> str:
 def _resolve_candidates(llm_provider: str) -> List[str]:
     chosen = (llm_provider or "").lower().strip()
     candidates: List[str] = []
-    if chosen and _provider_env(chosen) and os.environ.get(_provider_env(chosen) or ""):
+    # When _FORCE_BEST_MODEL is on (default) and ANTHROPIC_API_KEY is configured,
+    # try Anthropic Opus first regardless of what the user picked — the comp
+    # report deserves the strongest reasoning model.
+    if _FORCE_BEST_MODEL and os.environ.get(_ANTHROPIC_CFG["env"]):
+        candidates.append("anthropic")
+    if chosen and _provider_env(chosen) and os.environ.get(_provider_env(chosen) or "") and chosen not in candidates:
         candidates.append(chosen)
     for p in _FALLBACK_ORDER:
         env = _provider_env(p)
@@ -342,7 +357,15 @@ def generate(
     tried: List[Dict[str, str]] = []
     chosen = (llm_provider or "").lower().strip()
     for provider in candidates:
-        model = deep_model if (provider == chosen and deep_model) else _provider_default_model(provider)
+        # Default to the provider's flagship model — Anthropic = Opus 4.7,
+        # the strongest available reasoning model. Honor user override only
+        # if (a) we're not in force-best mode, OR (b) user explicitly named
+        # this provider AND _FORCE_BEST_MODEL is disabled.
+        force_default = _FORCE_BEST_MODEL or provider != chosen
+        if force_default:
+            model = _provider_default_model(provider)
+        else:
+            model = deep_model or _provider_default_model(provider)
         if not model:
             tried.append({"provider": provider, "model": "(unknown)", "error": "no default model"})
             continue
