@@ -1,25 +1,32 @@
-diff --git a/TradingAgents/tradingagents/llm_clients/factory.py b/TradingAgents/tradingagents/llm_clients/factory.py
-index e1d2455..a4dba20 100644
---- a/TradingAgents/tradingagents/llm_clients/factory.py
-+++ b/TradingAgents/tradingagents/llm_clients/factory.py
-@@ -4,7 +4,7 @@ from .base_client import BaseLLMClient
- 
- # Providers that use the OpenAI-compatible chat completions API
- _OPENAI_COMPATIBLE = (
--    "openai", "xai", "deepseek", "qwen", "glm", "ollama", "openrouter",
-+    "openai", "xai", "deepseek", "qwen", "glm", "kimi", "ollama", "openrouter",
+--- a/TradingAgents/tradingagents/llm_clients/factory.py	2026-05-21 22:56:09
++++ b/TradingAgents/tradingagents/llm_clients/factory.py	2026-05-21 22:50:29
+@@ -8,6 +8,7 @@
+     "qwen", "qwen-cn",
+     "glm", "glm-cn",
+     "minimax", "minimax-cn",
++    "kimi",
+     "ollama", "openrouter",
  )
  
- 
-diff --git a/TradingAgents/tradingagents/llm_clients/openai_client.py b/TradingAgents/tradingagents/llm_clients/openai_client.py
-index b74e26e..dc96791 100644
---- a/TradingAgents/tradingagents/llm_clients/openai_client.py
-+++ b/TradingAgents/tradingagents/llm_clients/openai_client.py
-@@ -115,6 +115,7 @@ _PROVIDER_CONFIG = {
-     "deepseek": ("https://api.deepseek.com", "DEEPSEEK_API_KEY"),
-     "qwen": ("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
-     "glm": ("https://api.z.ai/api/paas/v4/", "ZHIPU_API_KEY"),
-+    "kimi": ("https://api.moonshot.cn/v1", "MOONSHOT_API_KEY"),
-     "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
-     "ollama": ("http://localhost:11434/v1", None),
+--- a/TradingAgents/tradingagents/llm_clients/openai_client.py	2026-05-21 22:56:09
++++ b/TradingAgents/tradingagents/llm_clients/openai_client.py	2026-05-21 22:51:48
+@@ -156,6 +156,8 @@
+     "glm-cn":     "https://open.bigmodel.cn/api/paas/v4/",
+     "minimax":    "https://api.minimax.io/v1",
+     "minimax-cn": "https://api.minimaxi.com/v1",
++    # Moonshot Kimi (China) — local patch 0001.
++    "kimi":       "https://api.moonshot.cn/v1",
+     "openrouter": "https://openrouter.ai/api/v1",
+     "ollama":     "http://localhost:11434/v1",
  }
+--- a/TradingAgents/tradingagents/llm_clients/api_key_env.py	2026-05-21 22:56:09
++++ b/TradingAgents/tradingagents/llm_clients/api_key_env.py	2026-05-21 22:51:06
+@@ -29,6 +29,8 @@
+     "glm-cn":     "ZHIPU_CN_API_KEY",
+     "minimax":    "MINIMAX_API_KEY",
+     "minimax-cn": "MINIMAX_CN_API_KEY",
++    # Moonshot Kimi (China) — added by local patch 0001.
++    "kimi":       "MOONSHOT_API_KEY",
+     "openrouter": "OPENROUTER_API_KEY",
+     # Local runtimes do not authenticate.
+     "ollama":     None,
