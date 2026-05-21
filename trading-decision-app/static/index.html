@@ -38,8 +38,7 @@
   <div class="tabs-left">
     <button class="active" data-tab="home">首页</button>
     <button data-tab="watchlist">⭐ 自选</button>
-    <button data-tab="decision" style="display:none;" id="tab-btn-decision">运行中</button>
-    <button data-tab="history">📜 历史<span class="nav-badge" id="history-nav-badge" style="display:none;"></span></button>
+    <button data-tab="decisions" id="tab-btn-decisions">🎯 决策<span class="nav-badge" id="decisions-nav-badge" style="display:none;"></span></button>
     <button data-tab="opportunities">⚡ 24h 机会<span class="nav-badge" id="opps-nav-badge" style="display:none;"></span></button>
     <button data-tab="library">策略库</button>
     <button data-tab="favorites">⭐ 收藏</button>
@@ -284,169 +283,151 @@
 </section>
 
 <!-- ========================================================== -->
-<!--  AI DECISION TAB (entry point only — opened from 自选)       -->
+<!--  UNIFIED DECISIONS PAGE                                     -->
+<!--  Merges 运行中 + 历史 into one workspace: left = chronological -->
+<!--  list of every decision (running + finished + restored),     -->
+<!--  right = full cockpit + multi-horizon strategy plan.         -->
 <!-- ========================================================== -->
-<section class="tab-content" id="decision">
-  <h2>多智能体投研 + 策略库匹配</h2>
-  <p class="muted">
-    输入股票代码与日期，TradingAgents 的 12 个智能体会依次分析、辩论并给出五档评级。
-    <strong>每次启动都开一个新窗口</strong>，可以同时跑多个标的。完成后会自动保存到左侧"历史决策"，可以随时回看、下载报告。
-  </p>
-
-  <!-- Default state: just a big "新建决策" button. Form expands on click. -->
-  <div id="decision-launch" class="decision-launch">
-    <button class="btn primary big" id="decision-launch-btn">▶ 启动新决策</button>
-    <span class="muted" style="font-size:12px; margin-left:12px;">点击后填写参数</span>
-  </div>
-
-  <div class="decision-form" id="decision-form-wrap" style="display:none;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-      <strong style="font-size:15px;">配置新决策</strong>
-      <button class="icon-btn small" id="decision-form-close" title="收起">×</button>
-    </div>
-    <form id="decision-form">
-      <div class="form-grid">
-        <div class="field">
-          <label for="ticker">股票代码 / 交易品种</label>
-          <input id="ticker" type="text" placeholder="例如：NVDA、TSLA、SPY、BTC-USD" value="NVDA" />
-          <span class="hint">支持 yfinance 可识别的股票/ETF/加密代码。</span>
-        </div>
-        <div class="field">
-          <label for="trade-date">分析日期</label>
-          <input id="trade-date" type="date" />
-          <span class="hint">通常用今天或最近交易日。</span>
-        </div>
-        <div class="field">
-          <label for="llm-provider">LLM 提供商 <span id="provider-key-badge" class="pill" style="margin-left:6px;"></span></label>
-          <select id="llm-provider"></select>
-          <span class="hint" id="provider-hint">从 .env 自动检测可用提供商。</span>
-        </div>
-        <div class="field">
-          <label for="deep-llm">深思模型 (deep)</label>
-          <select id="deep-llm"></select>
-          <input id="deep-llm-custom" type="text" placeholder="自定义模型 ID" style="display:none; margin-top:4px;" />
-          <span class="hint">用于辩论与最终决策。</span>
-        </div>
-        <div class="field">
-          <label for="quick-llm">轻思模型 (quick)</label>
-          <select id="quick-llm"></select>
-          <input id="quick-llm-custom" type="text" placeholder="自定义模型 ID" style="display:none; margin-top:4px;" />
-          <span class="hint">用于工具调用与信号处理。</span>
-        </div>
-        <div class="field">
-          <label for="depth">研究深度</label>
-          <select id="depth">
-            <option value="1">1 轮（快速）</option>
-            <option value="2" selected>2 轮（标准）</option>
-            <option value="3">3 轮（深度）</option>
-            <option value="5">5 轮（极致）</option>
-          </select>
-          <span class="hint">投资辩论与风险讨论各跑 N 轮。</span>
-        </div>
-        <div class="field">
-          <label for="language">输出语言</label>
-          <select id="language">
-            <option value="Chinese">中文</option>
-            <option value="English">English</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="risk-tolerance">风险偏好</label>
-          <select id="risk-tolerance">
-            <option value="1">保守 ★</option>
-            <option value="2">稳健 ★★</option>
-            <option value="3" selected>中性 ★★★</option>
-            <option value="4">进取 ★★★★</option>
-            <option value="5">激进 ★★★★★</option>
-          </select>
-        </div>
-
-        <!-- Hidden: pinned defaults — instrument hint = 不限, mode = live,
-             all 4 analysts on, both advanced toggles on. Wired in readForm(). -->
-      </div>
-
-      <div style="margin-top: 12px;">
-        <span class="muted" style="font-size:12px;">快速试用情境：</span>
-        <span class="example-chip chip" data-params='{"ticker":"NVDA","trade-date":"2024-05-10","instrument":"stock","risk-tolerance":"4","depth":"1"}'>NVDA · 2024-05</span>
-        <span class="example-chip chip" data-params='{"ticker":"SPY","trade-date":"2024-09-15","instrument":"etf","risk-tolerance":"2","depth":"2"}'>SPY · 防守</span>
-        <span class="example-chip chip" data-params='{"ticker":"BTC-USD","trade-date":"2024-11-08","instrument":"crypto","risk-tolerance":"5","depth":"1"}'>BTC · 高波动</span>
-      </div>
-
-      <div class="form-actions">
-        <button class="btn primary" id="decision-submit">▶ 启动新决策</button>
-        <span class="muted" style="font-size:12px;">每次启动会开一个新窗口</span>
-      </div>
-    </form>
-  </div>
-
-  <!-- WORKSPACE: just the running decision windows.
-       History lives entirely in the dedicated 📜 历史 tab. -->
-  <div class="decision-workspace">
-    <div class="windows-area" style="grid-column: 1 / -1;">
-      <div class="window-tabs" id="window-tabs">
-        <span class="muted" style="font-size:12px; padding:4px 8px;">尚未启动任何决策窗口</span>
-      </div>
-      <div class="windows-container" id="windows-container">
-        <!-- DecisionWindow instances mount their cockpit here -->
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ========================================================== -->
-<!--  HISTORY (full page)                                        -->
-<!-- ========================================================== -->
-<section class="tab-content" id="history">
-  <div class="history-page">
-    <header class="history-page-head">
+<section class="tab-content" id="decisions">
+  <div class="decisions-page">
+    <!-- Top bar: header + KPI + new-decision launcher -->
+    <header class="decisions-head">
       <div>
-        <h2 style="margin:0;">📜 历史决策</h2>
-        <p class="muted" style="margin:4px 0 0; font-size:13px;">查看、筛选、对比所有跑过的决策。点击任意行查看完整参数与最终判断。</p>
+        <h2 style="margin:0;">🎯 决策</h2>
+        <p class="muted" style="margin:4px 0 0; font-size:13px;">
+          所有 AI 决策都在这里：实时观察跑动中的会话、回顾历史结果，并查看分短/中/长期的目标价位与执行策略。
+        </p>
       </div>
-      <div class="history-page-stats" id="history-page-stats"></div>
+      <div class="decisions-kpi" id="decisions-kpi"></div>
     </header>
 
-    <div class="history-page-toolbar">
-      <!-- Decoy input: Chrome's autofill heuristic targets the FIRST text/email
-           input it sees in the form context. We give it a hidden dummy to
-           autofill instead, leaving the real search box untouched. -->
+    <!-- Toolbar: + new + search + sort + clear -->
+    <div class="decisions-toolbar">
+      <button class="btn primary small" id="decisions-new-btn">▶ 新建决策</button>
+      <!-- Same Chrome autofill decoy trick as the old History page -->
       <input type="text" name="email-decoy" autocomplete="username"
              tabindex="-1" aria-hidden="true"
              style="position:absolute; left:-9999px; opacity:0; width:1px; height:1px;" />
-      <input type="text" class="history-page-search" id="history-page-search"
-             name="filter-history-search-input"
+      <input type="text" class="decisions-search" id="decisions-search"
+             name="filter-decisions-search-input"
              autocomplete="new-password" autocapitalize="off"
              spellcheck="false" readonly
              data-1p-ignore data-lpignore="true"
              onfocus="this.removeAttribute('readonly'); this.removeAttribute('value');"
              placeholder="🔍 搜索代码 / 备注 / 决策内容…" />
-      <div class="history-page-actions">
-        <button class="btn secondary small" id="history-page-clear-filters">清空筛选</button>
-        <button class="btn secondary small" id="history-page-refresh">↻ 刷新</button>
-        <button class="btn danger small" id="history-page-clear-all">🗑 清空全部</button>
+      <select id="decisions-sort" class="decisions-sort">
+        <option value="time-desc">最近 ↓</option>
+        <option value="time-asc">最早 ↑</option>
+        <option value="rating">评分</option>
+        <option value="ticker">代码</option>
+        <option value="depth-desc">深度</option>
+      </select>
+      <span style="flex:1;"></span>
+      <button class="btn secondary small" id="decisions-clear-filters">清空筛选</button>
+      <button class="btn secondary small" id="decisions-refresh">↻ 刷新</button>
+      <button class="btn danger small" id="decisions-clear-all">🗑 清空全部</button>
+    </div>
+
+    <!-- Filter chips -->
+    <div class="decisions-filters" id="decisions-filters">
+      <!-- Filter chip groups injected by DecisionsPage.renderFilters() -->
+    </div>
+
+    <!-- New-decision form (slide-down inline) -->
+    <div class="decision-form decisions-form" id="decision-form-wrap" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <strong style="font-size:15px;">配置新决策</strong>
+        <button class="icon-btn small" id="decision-form-close" title="收起">×</button>
       </div>
+      <form id="decision-form">
+        <div class="form-grid">
+          <div class="field">
+            <label for="ticker">股票代码 / 交易品种</label>
+            <input id="ticker" type="text" placeholder="例如：NVDA、TSLA、SPY、BTC-USD" value="NVDA" />
+            <span class="hint">支持 yfinance 可识别的股票/ETF/加密代码。</span>
+          </div>
+          <div class="field">
+            <label for="trade-date">分析日期</label>
+            <input id="trade-date" type="date" />
+            <span class="hint">通常用今天或最近交易日。</span>
+          </div>
+          <div class="field">
+            <label for="llm-provider">LLM 提供商 <span id="provider-key-badge" class="pill" style="margin-left:6px;"></span></label>
+            <select id="llm-provider"></select>
+            <span class="hint" id="provider-hint">从 .env 自动检测可用提供商。</span>
+          </div>
+          <div class="field">
+            <label for="deep-llm">深思模型 (deep)</label>
+            <select id="deep-llm"></select>
+            <input id="deep-llm-custom" type="text" placeholder="自定义模型 ID" style="display:none; margin-top:4px;" />
+            <span class="hint">用于辩论、最终决策与多周期目标价规划。</span>
+          </div>
+          <div class="field">
+            <label for="quick-llm">轻思模型 (quick)</label>
+            <select id="quick-llm"></select>
+            <input id="quick-llm-custom" type="text" placeholder="自定义模型 ID" style="display:none; margin-top:4px;" />
+            <span class="hint">用于工具调用与信号处理。</span>
+          </div>
+          <div class="field">
+            <label for="depth">研究深度</label>
+            <select id="depth">
+              <option value="1">1 轮（快速）</option>
+              <option value="2" selected>2 轮（标准）</option>
+              <option value="3">3 轮（深度）</option>
+              <option value="5">5 轮（极致）</option>
+            </select>
+            <span class="hint">投资辩论与风险讨论各跑 N 轮。</span>
+          </div>
+          <div class="field">
+            <label for="language">输出语言</label>
+            <select id="language">
+              <option value="Chinese">中文</option>
+              <option value="English">English</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="risk-tolerance">风险偏好</label>
+            <select id="risk-tolerance">
+              <option value="1">保守 ★</option>
+              <option value="2">稳健 ★★</option>
+              <option value="3" selected>中性 ★★★</option>
+              <option value="4">进取 ★★★★</option>
+              <option value="5">激进 ★★★★★</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="margin-top: 12px;">
+          <span class="muted" style="font-size:12px;">快速试用情境：</span>
+          <span class="example-chip chip" data-params='{"ticker":"NVDA","trade-date":"2024-05-10","instrument":"stock","risk-tolerance":"4","depth":"1"}'>NVDA · 2024-05</span>
+          <span class="example-chip chip" data-params='{"ticker":"SPY","trade-date":"2024-09-15","instrument":"etf","risk-tolerance":"2","depth":"2"}'>SPY · 防守</span>
+          <span class="example-chip chip" data-params='{"ticker":"BTC-USD","trade-date":"2024-11-08","instrument":"crypto","risk-tolerance":"5","depth":"1"}'>BTC · 高波动</span>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn primary" id="decision-submit">▶ 启动新决策</button>
+          <span class="muted" style="font-size:12px;">每次启动会开一个新窗口</span>
+        </div>
+      </form>
     </div>
 
-    <div class="history-page-filters" id="history-page-filters">
-      <!-- filter chip groups injected by HistoryPage.renderFilters() -->
-    </div>
+    <!-- Sidebar layout: list of all decisions ←→ active decision cockpit -->
+    <div class="decisions-shell">
+      <aside class="decisions-sidebar">
+        <div class="decisions-list-empty" id="decisions-list-empty"></div>
+        <ul class="decisions-list" id="decisions-list"></ul>
+      </aside>
 
-    <div class="history-page-list-wrap">
-      <div class="history-page-empty" id="history-page-empty"></div>
-      <ul class="history-page-list" id="history-page-list"></ul>
+      <main class="decisions-main" id="decisions-main">
+        <div class="decisions-main-empty" id="decisions-main-empty">
+          ← 选择左侧任意决策查看完整内容，或点击 <strong>▶ 新建决策</strong> 启动新分析
+        </div>
+        <div class="windows-container" id="windows-container">
+          <!-- DecisionWindow instances mount their cockpit here -->
+        </div>
+      </main>
     </div>
   </div>
-
-  <!-- Detail drawer — slides in from right -->
-  <aside class="history-detail-drawer" id="history-detail-drawer" aria-hidden="true">
-    <div class="drawer-head">
-      <button class="icon-btn" id="history-detail-close" title="关闭">✕</button>
-      <span class="drawer-title" id="history-detail-title">—</span>
-      <div class="drawer-actions" id="history-detail-actions"></div>
-    </div>
-    <div class="drawer-body" id="history-detail-body"></div>
-  </aside>
-  <div class="history-detail-backdrop" id="history-detail-backdrop"></div>
 </section>
 
 <!-- ========================================================== -->

@@ -47,6 +47,7 @@ except ImportError:  # python-dotenv missing — fall back to OS env
 sys.path.insert(0, str(Path(__file__).parent))
 from agent_runner import AgentRunner, AnalysisRequest  # noqa: E402
 from strategy_matcher import match_strategies  # noqa: E402
+from horizon_planner import build_plan as build_horizon_plan  # noqa: E402
 from model_catalog import serialize as serialize_catalog, PROVIDER_KEY_ENV  # noqa: E402
 from dataflows.factory import list_categories as dataflows_list  # noqa: E402
 from opportunities import get_feed, start_scanner, stop_scanner  # noqa: E402
@@ -262,10 +263,22 @@ async def stream(sid: str, request: Request) -> StreamingResponse:
                     yield b": ping\n\n"
                     continue
 
-                # Augment the final decision with library-strategy matches.
+                # Augment the final decision with library-strategy matches
+                # and a multi-horizon execution plan (short / mid / long term).
                 if evt.get("type") == "final_decision":
                     matches = match_strategies(evt.get("decision", {}), session.params)
                     evt["matched_strategies"] = matches
+                    try:
+                        plan = await asyncio.to_thread(
+                            build_horizon_plan,
+                            evt.get("decision", {}),
+                            matches,
+                            session.params,
+                        )
+                        if plan:
+                            evt["horizon_plan"] = plan
+                    except Exception as e:  # pragma: no cover — defensive
+                        logger.warning("horizon planner crashed: %s", e)
 
                 yield _sse(evt)
 

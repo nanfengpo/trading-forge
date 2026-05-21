@@ -297,8 +297,8 @@ let serverConfig = null;
 let providerById = {};
 
 function showDecisionForm(show, presetTicker) {
-  document.getElementById("decision-launch").style.display = show ? "none" : "block";
-  document.getElementById("decision-form-wrap").style.display = show ? "block" : "none";
+  const wrap = document.getElementById("decision-form-wrap");
+  if (wrap) wrap.style.display = show ? "block" : "none";
   if (show) {
     if (presetTicker) {
       const el = document.getElementById("ticker");
@@ -309,12 +309,12 @@ function showDecisionForm(show, presetTicker) {
 }
 
 /**
- * Open the 决策 tab and pre-fill the form with the given ticker, then
- * scroll the form into view. Called by Watchlist row "▶ 启动新决策".
+ * Open the unified 决策 tab and pre-fill the new-decision form with the
+ * given ticker, then scroll the form into view. Called from Watchlist when
+ * the user clicks "▶ 启动新决策" next to a tracked asset.
  */
 function openDecisionFor(ticker) {
-  document.getElementById("tab-btn-decision").style.display = "";
-  document.querySelector('nav.tabs button[data-tab="decision"]').click();
+  document.querySelector('nav.tabs button[data-tab="decisions"]').click();
   showDecisionForm(true, ticker);
 }
 window.openDecisionFor = openDecisionFor;
@@ -334,24 +334,21 @@ function initDecisionForm() {
     box.addEventListener("change", () => lbl.classList.toggle("checked", box.checked));
   });
 
-  // Deferred form: launcher button → expand form; close button → collapse
-  document.getElementById("decision-launch-btn").addEventListener("click", e => {
-    e.preventDefault();
-    showDecisionForm(true);
-  });
-  document.getElementById("decision-form-close").addEventListener("click", e => {
+  // Form-collapse button (the launcher button lives inside DecisionsPage now,
+  // wired up via DecisionsPage.init() → "decisions-new-btn").
+  document.getElementById("decision-form-close")?.addEventListener("click", e => {
     e.preventDefault();
     showDecisionForm(false);
   });
 
-  document.getElementById("decision-submit").addEventListener("click", e => {
+  document.getElementById("decision-submit")?.addEventListener("click", e => {
     e.preventDefault();
     const params = readForm();
     if (!params.ticker || !params.trade_date) {
       alert("请填写股票代码和交易日期");
       return;
     }
-    WindowManager.create(params);
+    DecisionsPage.create(params);
     // Auto-collapse the form after launch — feels lighter that way
     showDecisionForm(false);
   });
@@ -1060,9 +1057,14 @@ class DecisionWindow {
       parsed: matched.parsed,
     };
     this.runState.matchedStrategies = matched.items || [];
+    // Multi-horizon plan: backend attaches `horizon_plan` to the final_decision
+    // SSE event when the deep LLM successfully produced one. Falsy / missing
+    // when the planner couldn't run (no key, JSON parse failure, etc.) — the
+    // UI degrades to just the matched-strategy list in that case.
+    this.runState.horizonPlan = evt.horizon_plan || null;
     this.rerenderFinalCard();
     this.setBadge("final", dec.rating || "✓", "ready");
-    WindowManager.renderTabs();  // tab label often wants to show rating
+    if (typeof DecisionsPage !== "undefined") DecisionsPage.render();
   }
 
   rerenderFinalCard() {
@@ -1107,6 +1109,8 @@ class DecisionWindow {
     const transHint = (!dec.raw_zh && dec.raw_en && !isMostlyChinese(dec.raw_en) && this.runState.translation?.available)
       ? `<div class="pending-translation">🔄 中文翻译生成中…</div>` : "";
 
+    const planHtml = this._horizonPlanHtml(this.runState.horizonPlan, matched);
+
     card.innerHTML = `
       <div class="decision-card">
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -1117,9 +1121,187 @@ class DecisionWindow {
         ${transHint}
         <div style="margin-top:14px;">${mdLite(raw)}</div>
       </div>
-      <h3>📚 来自策略库的匹配方案（按匹配度排序）</h3>
+      ${planHtml}
+      <h3 style="margin-top:24px;">📚 来自策略库的匹配方案（按匹配度排序）</h3>
       <div class="match-list">${matchHtml}</div>
     `;
+    this._wireHorizonTabs();
+  }
+
+  /**
+   * Build the multi-horizon plan card. The deep model emits short / mid /
+   * long horizons with target prices, scenarios, execution playbook, and
+   * adjustment rules. We render them as a 3-tab card so each horizon is
+   * an order-able playbook by itself, while the user can compare across.
+   */
+  _horizonPlanHtml(plan, matched) {
+    if (!plan || !plan.horizons) {
+      return `
+        <div class="horizon-plan-card empty">
+          <div class="horizon-plan-head">
+            <h3 style="margin:0;">🗓 多周期目标价 + 执行策略</h3>
+            <span class="muted" style="font-size:12px;">需要深思模型 API key — 未生成。</span>
+          </div>
+        </div>`;
+    }
+
+    const HORIZON_ORDER = ["short", "mid", "long"];
+    const labels = plan.labels || { short: "短期 (1-2 个月)", mid: "中期 (3-6 个月)", long: "长期 (6 个月以上)" };
+    const stratById = {};
+    (matched || []).forEach(m => { if (m.id) stratById[m.id] = m; });
+    const cur = plan.current_price;
+    const curStr = (cur != null && !isNaN(cur)) ? `当前价 $${Number(cur).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "";
+    const provBadge = plan.model ? `<span class="pill" style="font-size:10px;">${escapeHtml(plan.model)}</span>` : "";
+
+    const tabs = HORIZON_ORDER.map((k, i) => {
+      const h = plan.horizons[k] || {};
+      const ret = h.expected_return_pct;
+      const retCls = ret == null ? "" : (ret > 0 ? "up" : ret < 0 ? "down" : "");
+      const retTxt = ret == null ? "—" : (ret > 0 ? "+" : "") + Number(ret).toFixed(1) + "%";
+      return `
+        <button class="horizon-tab ${i === 0 ? "active" : ""}" data-horizon="${k}">
+          <span class="horizon-tab-label">${labels[k] || k}</span>
+          <span class="horizon-tab-meta">
+            <span class="horizon-tab-target">${escapeHtml(h.target_price || "—")}</span>
+            <span class="horizon-tab-ret ${retCls}">${retTxt}</span>
+          </span>
+        </button>`;
+    }).join("");
+
+    const panes = HORIZON_ORDER.map((k, i) => {
+      const h = plan.horizons[k] || {};
+      return `
+        <div class="horizon-pane ${i === 0 ? "active" : ""}" data-horizon-pane="${k}">
+          ${this._renderHorizonPane(k, h, labels[k] || k, stratById)}
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="horizon-plan-card">
+        <div class="horizon-plan-head">
+          <h3 style="margin:0;">🗓 多周期目标价 + 执行策略</h3>
+          <div class="horizon-plan-meta">
+            ${curStr ? `<span class="muted">${escapeHtml(curStr)}${plan.quote_source ? ` · ${escapeHtml(plan.quote_source)}` : ""}</span>` : ""}
+            ${provBadge}
+          </div>
+        </div>
+        ${plan.summary ? `<div class="horizon-plan-summary">${escapeHtml(plan.summary)}</div>` : ""}
+        <div class="horizon-tabs">${tabs}</div>
+        <div class="horizon-panes">${panes}</div>
+      </div>`;
+  }
+
+  /** Render the inside of one horizon pane (target / scenarios / execution / adjustments). */
+  _renderHorizonPane(key, h, label, stratById) {
+    const confEmoji = { high: "🟢 高把握", medium: "🟡 中等把握", low: "🟠 低把握" };
+    const ret = h.expected_return_pct;
+    const retCls = ret == null ? "" : (ret > 0 ? "up" : ret < 0 ? "down" : "");
+    const retTxt = ret == null ? "—" : (ret > 0 ? "+" : "") + Number(ret).toFixed(1) + "%";
+
+    // Top stats strip
+    const stats = `
+      <div class="horizon-stats">
+        <div class="horizon-stat">
+          <div class="label">目标价</div>
+          <div class="value primary">${escapeHtml(h.target_price || "—")}</div>
+        </div>
+        <div class="horizon-stat">
+          <div class="label">预期收益</div>
+          <div class="value ${retCls}">${retTxt}</div>
+        </div>
+        <div class="horizon-stat">
+          <div class="label">止损</div>
+          <div class="value down">${escapeHtml(h.stop_loss || "—")}</div>
+        </div>
+        <div class="horizon-stat">
+          <div class="label">把握度</div>
+          <div class="value">${confEmoji[h.confidence] || "—"}</div>
+        </div>
+      </div>`;
+
+    // Scenarios: 3 cards bull/base/bear with probability progress bars
+    const SC_META = {
+      bull: { label: "🐂 牛市情景", cls: "scen-bull" },
+      base: { label: "🎯 基线情景", cls: "scen-base" },
+      bear: { label: "🐻 熊市情景", cls: "scen-bear" },
+    };
+    const scenarios = (h.scenarios || []).map(s => {
+      const m = SC_META[s.name] || { label: s.name, cls: "" };
+      const probPct = Math.round((s.probability || 0) * 100);
+      return `
+        <div class="scenario-card ${m.cls}">
+          <div class="scenario-head">
+            <span class="scenario-name">${m.label}</span>
+            <span class="scenario-prob">${probPct}%</span>
+          </div>
+          <div class="scenario-prob-bar"><div class="bar" style="width:${probPct}%;"></div></div>
+          <div class="scenario-row"><span class="k">触发</span><span class="v">${escapeHtml(s.trigger || "—")}</span></div>
+          <div class="scenario-row"><span class="k">目标价</span><span class="v target">${escapeHtml(s.target_price || "—")}</span></div>
+          <div class="scenario-row"><span class="k">动作</span><span class="v">${escapeHtml(s.action || "—")}</span></div>
+        </div>`;
+    }).join("") || `<div class="muted">深思模型未给出情景分支。</div>`;
+
+    // Execution playbook
+    const ex = h.execution || {};
+    const ladder = (ex.take_profit_ladder || []).map(x => `<li>${escapeHtml(x)}</li>`).join("");
+    const mons = (ex.monitors || []).map(x => `<li>${escapeHtml(x)}</li>`).join("");
+    const execBlock = `
+      <div class="execution-block">
+        <h4>📋 执行策略</h4>
+        <div class="exec-grid">
+          <div class="exec-cell"><span class="exec-label">入场</span><span class="exec-value">${escapeHtml(ex.entry || "—")}</span></div>
+          <div class="exec-cell"><span class="exec-label">仓位</span><span class="exec-value">${escapeHtml(ex.size || "—")}</span></div>
+          <div class="exec-cell"><span class="exec-label">止损</span><span class="exec-value">${escapeHtml(ex.stop || "—")}</span></div>
+        </div>
+        ${ladder ? `<div class="exec-sub"><strong>止盈梯度：</strong><ul>${ladder}</ul></div>` : ""}
+        ${mons ? `<div class="exec-sub"><strong>盯盘信号：</strong><ul>${mons}</ul></div>` : ""}
+      </div>`;
+
+    // Strategies referenced from matched library
+    const strats = (h.strategies || []).map(sid => {
+      const s = stratById[sid];
+      if (!s) return `<span class="strat-chip missing">${escapeHtml(sid)}</span>`;
+      return `<span class="strat-chip" title="${escapeHtml(s.desc || "")}">${escapeHtml(s.name || sid)}</span>`;
+    }).join("");
+    const stratBlock = strats ? `
+      <div class="execution-block">
+        <h4>📚 关联策略</h4>
+        <div class="strat-chips">${strats}</div>
+      </div>` : "";
+
+    // Adjustment rules
+    const adj = (h.adjustments || []).map(a => `
+      <div class="adjust-row">
+        <span class="adjust-if"><strong>若</strong> ${escapeHtml(a.if || "")}</span>
+        <span class="adjust-then"><strong>则</strong> ${escapeHtml(a.then || "")}</span>
+      </div>`).join("");
+    const adjBlock = adj ? `
+      <div class="execution-block">
+        <h4>🛠 调整策略 (if / then)</h4>
+        <div class="adjust-list">${adj}</div>
+      </div>` : "";
+
+    return stats + `
+      <div class="horizon-section">
+        <h4>📊 情景分析</h4>
+        <div class="scenarios-grid">${scenarios}</div>
+      </div>
+      ${execBlock}
+      ${stratBlock}
+      ${adjBlock}`;
+  }
+
+  /** Wire the 3 horizon tabs inside the final-card. */
+  _wireHorizonTabs() {
+    const card = this.q(".final-card");
+    if (!card) return;
+    card.querySelectorAll(".horizon-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const k = btn.dataset.horizon;
+        card.querySelectorAll(".horizon-tab").forEach(b => b.classList.toggle("active", b === btn));
+        card.querySelectorAll(".horizon-pane").forEach(p => p.classList.toggle("active", p.dataset.horizonPane === k));
+      });
+    });
   }
 
   applyTranslationPatch(evt) {
@@ -1203,10 +1385,11 @@ class DecisionWindow {
       });
     });
 
-    // final
+    // final + multi-horizon plan (persisted alongside the final decision)
     if (entry.runState.finalDecision) {
       w.runState.finalDecision = entry.runState.finalDecision;
       w.runState.matchedStrategies = entry.runState.matchedStrategies;
+      w.runState.horizonPlan = entry.runState.horizonPlan || null;
       w.rerenderFinalCard();
       w.setBadge("final", entry.runState.finalDecision.rating || "✓", "ready");
     }
@@ -1239,6 +1422,7 @@ class DecisionWindow {
         risk_debate: this.runState.riskDebate,
         final_decision: this.runState.finalDecision,
         matched_strategies: this.runState.matchedStrategies,
+        horizon_plan: this.runState.horizonPlan,
         events: this.runState.events,
       };
       blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -1353,6 +1537,55 @@ class DecisionWindow {
       lines.push("");
     }
 
+    // ---- MULTI-HORIZON PLAN (short / mid / long target prices + plans) ---
+    const plan = this.runState.horizonPlan;
+    if (plan && plan.horizons) {
+      lines.push("## 🗓 多周期目标价 + 执行策略");
+      lines.push("");
+      if (plan.summary) { lines.push(`> ${plan.summary}`); lines.push(""); }
+      lines.push("| 周期 | 目标价 | 预期收益 | 止损 | 把握度 |");
+      lines.push("|---|---|---|---|---|");
+      ["short", "mid", "long"].forEach(k => {
+        const h = plan.horizons[k] || {};
+        const lbl = (plan.labels && plan.labels[k]) || k;
+        const ret = h.expected_return_pct == null ? "—" : `${h.expected_return_pct > 0 ? "+" : ""}${Number(h.expected_return_pct).toFixed(1)}%`;
+        lines.push(`| ${lbl} | ${h.target_price || "—"} | ${ret} | ${h.stop_loss || "—"} | ${h.confidence || "—"} |`);
+      });
+      lines.push("");
+      ["short", "mid", "long"].forEach(k => {
+        const h = plan.horizons[k] || {};
+        const lbl = (plan.labels && plan.labels[k]) || k;
+        lines.push(`### ${lbl}`);
+        lines.push("");
+        if (h.scenarios?.length) {
+          lines.push("**情景分析**");
+          lines.push("");
+          h.scenarios.forEach(s => {
+            const name = { bull: "🐂 牛市", base: "🎯 基线", bear: "🐻 熊市" }[s.name] || s.name;
+            lines.push(`- ${name} (概率 ${Math.round((s.probability || 0) * 100)}%): 目标 ${s.target_price || "—"}; 触发: ${s.trigger || "—"}; 动作: ${s.action || "—"}`);
+          });
+          lines.push("");
+        }
+        const ex = h.execution || {};
+        if (ex.entry || ex.size || ex.stop) {
+          lines.push("**执行策略**");
+          lines.push("");
+          if (ex.entry) lines.push(`- 入场: ${ex.entry}`);
+          if (ex.size)  lines.push(`- 仓位: ${ex.size}`);
+          if (ex.stop)  lines.push(`- 止损: ${ex.stop}`);
+          if (ex.take_profit_ladder?.length) lines.push(`- 止盈: ${ex.take_profit_ladder.join("; ")}`);
+          if (ex.monitors?.length) lines.push(`- 盯盘: ${ex.monitors.join("; ")}`);
+          lines.push("");
+        }
+        if (h.adjustments?.length) {
+          lines.push("**调整规则**");
+          lines.push("");
+          h.adjustments.forEach(a => lines.push(`- 若 ${a.if} → 则 ${a.then}`));
+          lines.push("");
+        }
+      });
+    }
+
     // ---- STRATEGY MATCHES (anchor: 策略库匹配) -------------------------
     if (has.strategies) {
       lines.push("## 📚 策略库匹配");
@@ -1458,46 +1691,143 @@ class DecisionWindow {
 }
 
 // =========================================================================
-// WindowManager — multiple concurrent DecisionWindows
+// DecisionsPage — the unified 决策 page.
+//
+// Replaces the legacy WindowManager (running cockpits) + HistoryPage (saved
+// decisions table). Everything lives in one screen:
+//
+//   ┌──────────────────────────────────────────────────────────────────┐
+//   │ KPI strip · 新建决策 · search · sort · filter chips               │
+//   ├──────────────────┬───────────────────────────────────────────────┤
+//   │  decisions-list  │  selected DecisionWindow cockpit               │
+//   │  (sidebar)       │  + 多周期目标价 + 执行策略                       │
+//   └──────────────────┴───────────────────────────────────────────────┘
+//
+// The list merges live windows (this.windows) with persisted History.cache;
+// when the user picks a historical entry that has no live window we lazily
+// create one via DecisionWindow.fromHistory and mount it in the main pane.
 // =========================================================================
-const WindowManager = {
-  windows: new Map(),
-  activeId: null,
+const DecisionsPage = {
+  windows: new Map(),    // id → DecisionWindow (live + restored)
+  activeId: null,        // currently selected decision id
+  filters: {
+    rating:     new Set(),
+    instrument: new Set(),
+    provider:   new Set(),
+    depth:      new Set(),
+    status:     new Set(),
+    stars:      "all",
+    pinned:     false,
+    favorited:  false,
+    dateRange:  "all",
+  },
+  search: "",
+  sort:   "time-desc",
 
   init() {
-    this.tabsEl = document.getElementById("window-tabs");
+    this.listEl    = document.getElementById("decisions-list");
+    this.emptyEl   = document.getElementById("decisions-list-empty");
+    this.mainEl    = document.getElementById("decisions-main");
+    this.mainEmpty = document.getElementById("decisions-main-empty");
     this.containerEl = document.getElementById("windows-container");
+    this.filtersEl = document.getElementById("decisions-filters");
+    this.kpiEl     = document.getElementById("decisions-kpi");
+    this.searchEl  = document.getElementById("decisions-search");
+    this.sortEl    = document.getElementById("decisions-sort");
+    if (!this.listEl) return;  // tab not in DOM (older index.html)
+
+    // Same belt-and-suspenders anti-autofill stomp the old History tab used:
+    // Chrome will sometimes write an email-shaped value into the search box
+    // even with readonly + autocomplete=new-password. Wipe it on focus + a
+    // few delays + when the user switches to the decisions tab.
+    this._stompAutofill = () => {
+      if (this.searchEl && /@/.test(this.searchEl.value || "")) {
+        this.searchEl.value = "";
+        this.search = "";
+        this.render();
+      }
+    };
+    requestAnimationFrame(this._stompAutofill);
+    [100, 300, 800, 2000].forEach(ms => setTimeout(this._stompAutofill, ms));
+    document.querySelector('nav.tabs button[data-tab="decisions"]')?.addEventListener("click", () => {
+      [50, 200].forEach(ms => setTimeout(this._stompAutofill, ms));
+    });
+
+    this.searchEl.addEventListener("input", e => {
+      this.search = e.target.value.trim().toLowerCase();
+      this.render();
+    });
+    this.sortEl.addEventListener("change", e => { this.sort = e.target.value; this.render(); });
+
+    document.getElementById("decisions-new-btn").addEventListener("click", () => showDecisionForm(true));
+    document.getElementById("decisions-clear-filters").addEventListener("click", () => this.clearFilters());
+    document.getElementById("decisions-refresh").addEventListener("click", async () => {
+      await History.refresh();
+    });
+    document.getElementById("decisions-clear-all").addEventListener("click", async () => {
+      if (!confirm("确定要清空所有历史决策？此操作无法撤销。")) return;
+      if (History._useRemote()) await window.Decisions.deleteAll();
+      else localStorage.removeItem(History.LOCAL_KEY);
+      await History.refresh();
+    });
+
+    this.render();
   },
 
+  clearFilters() {
+    this.filters.rating.clear();
+    this.filters.instrument.clear();
+    this.filters.provider.clear();
+    this.filters.depth.clear();
+    this.filters.status.clear();
+    this.filters.stars = "all";
+    this.filters.pinned = false;
+    this.filters.favorited = false;
+    this.filters.dateRange = "all";
+    this.search = "";
+    if (this.searchEl) this.searchEl.value = "";
+    this.render();
+  },
+
+  // ---- mounting ---------------------------------------------------------
+
+  /**
+   * Launch a brand new decision: create a DecisionWindow, mount its cockpit
+   * into the main pane, start the SSE stream, and select it in the sidebar.
+   */
   create(params) {
     const w = new DecisionWindow(params);
     this.windows.set(w.id, w);
     this.containerEl.appendChild(w.dom);
     this.activate(w.id);
     w.start();
-    this.renderTabs();
+    this.render();
     return w;
   },
 
+  /**
+   * Mount (or re-activate) the cockpit for a historical decision entry.
+   * Idempotent — clicking the same row repeatedly just re-selects.
+   */
   openHistorical(entry) {
-    // If a window already open with this history id, just activate
     if (this.windows.has(entry.id)) { this.activate(entry.id); return; }
     const w = DecisionWindow.fromHistory(entry);
     this.windows.set(w.id, w);
     this.containerEl.appendChild(w.dom);
     this.activate(w.id);
-    this.renderTabs();
+    this.render();
     return w;
   },
 
+  /** Mark a decision active and show its cockpit; hide others. */
   activate(id) {
     this.activeId = id;
-    this.windows.forEach((w, wid) => {
-      w.dom.classList.toggle("active", wid === id);
-    });
-    this.renderTabs();
+    this.windows.forEach((w, wid) => w.dom.classList.toggle("active", wid === id));
+    if (this.mainEmpty) this.mainEmpty.style.display = id ? "none" : "";
+    this.render();
   },
 
+  /** Tear down a window. */
   close(id) {
     const w = this.windows.get(id);
     if (!w) return;
@@ -1505,44 +1835,379 @@ const WindowManager = {
     w.dom.remove();
     this.windows.delete(id);
     if (this.activeId === id) {
-      const next = this.windows.keys().next().value;
-      if (next) this.activate(next);
-      else { this.activeId = null; this.renderTabs(); }
-    } else {
-      this.renderTabs();
+      // Pick the next visible item from the list if any, else clear.
+      const next = this._itemsForRender()[0];
+      if (next) {
+        if (this.windows.has(next.id)) this.activate(next.id);
+        else this.openHistorical(next);
+      } else {
+        this.activeId = null;
+        if (this.mainEmpty) this.mainEmpty.style.display = "";
+      }
     }
+    this.render();
   },
 
-  renderTabs() {
-    if (!this.tabsEl) return;
-    if (this.windows.size === 0) {
-      this.tabsEl.innerHTML = `<span class="muted" style="font-size:12px; padding:4px 8px;">尚未启动任何决策窗口</span>`;
+  // ---- list building / filter / sort ------------------------------------
+
+  /**
+   * Merge live windows + History.cache into one item array. Live windows
+   * win on id collisions because they have the freshest runState.
+   */
+  _allItems() {
+    const seen = new Set();
+    const out = [];
+    this.windows.forEach((w, wid) => {
+      const dec = w.runState.finalDecision || {};
+      out.push({
+        id: wid,
+        _window: w,
+        ticker: w.params.ticker,
+        trade_date: w.params.trade_date,
+        rating: dec.rating || null,
+        status: w.status,
+        startedAt: w.startedAt,
+        completedAt: w.completedAt,
+        pinned: false,
+        user_rating: 0,
+        params: w.params,
+        llm_provider:    w.params.llm_provider,
+        deep_think_llm:  w.params.deep_think_llm,
+        quick_think_llm: w.params.quick_think_llm,
+        research_depth:  w.params.research_depth,
+        mode:            w.params.mode,
+      });
+      seen.add(wid);
+    });
+    (History.cache || []).forEach(e => {
+      if (seen.has(e.id)) return;
+      out.push({ ...e, _window: null });
+    });
+    return out;
+  },
+
+  _instrument(e) {
+    return (typeof History !== "undefined") ? History._instrument(e) : "stock";
+  },
+
+  _statusOf(e) {
+    if (e._window) return e._window.status;
+    return e.status || "done";
+  },
+
+  _filtered(items) {
+    const f = this.filters;
+    const now = Date.now();
+    return items.filter(e => {
+      if (f.rating.size && !f.rating.has(e.rating)) return false;
+      if (f.instrument.size && !f.instrument.has(this._instrument(e))) return false;
+      if (f.provider.size && !f.provider.has(e.llm_provider)) return false;
+      if (f.depth.size && !f.depth.has(String(e.research_depth ?? ""))) return false;
+      if (f.status.size && !f.status.has(this._statusOf(e))) return false;
+      if (f.pinned && !e.pinned) return false;
+      if (f.favorited) {
+        if (typeof Favorites === "undefined" || !Favorites.isFavorited("decision", e.id)) return false;
+      }
+      if (f.stars !== "all") {
+        const s = e.user_rating || 0;
+        if (f.stars === "rated"   && s === 0) return false;
+        if (f.stars === "unrated" && s !== 0) return false;
+        if (/^\d+$/.test(f.stars) && s < parseInt(f.stars, 10)) return false;
+      }
+      if (f.dateRange !== "all") {
+        const t = new Date(e.completedAt || e.startedAt || e.createdAt).getTime();
+        const days = { "7d": 7, "30d": 30, "90d": 90 }[f.dateRange] || 0;
+        if (now - t > days * 86400 * 1000) return false;
+      }
+      if (this.search) {
+        const q = this.search;
+        const hay = `${e.ticker} ${e.user_note || ""} ${e.llm_provider || ""} ${e.deep_think_llm || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  },
+
+  _sorted(items) {
+    const ts = e => new Date(e.completedAt || e.startedAt || e.createdAt || 0).getTime();
+    const cmp = {
+      "time-desc":  (a, b) => ts(b) - ts(a),
+      "time-asc":   (a, b) => ts(a) - ts(b),
+      "rating":     (a, b) => (b.user_rating || 0) - (a.user_rating || 0) || ts(b) - ts(a),
+      "ticker":     (a, b) => (a.ticker || "").localeCompare(b.ticker || ""),
+      "depth-desc": (a, b) => (b.research_depth || 0) - (a.research_depth || 0),
+    }[this.sort] || ((a, b) => 0);
+    // Always bubble running cockpits to the very top — easier to find what
+    // is currently working without scrolling past finished ones.
+    const order = s => s === "running" ? 0 : 1;
+    return [...items].sort((a, b) => {
+      const oa = order(this._statusOf(a)), ob = order(this._statusOf(b));
+      if (oa !== ob) return oa - ob;
+      return cmp(a, b);
+    });
+  },
+
+  _itemsForRender() {
+    return this._sorted(this._filtered(this._allItems()));
+  },
+
+  // ---- rendering --------------------------------------------------------
+
+  render() {
+    if (!this.listEl) return;
+    this.renderKpi();
+    this.renderFilters();
+
+    const items = this._itemsForRender();
+    const total = this._allItems().length;
+
+    if (!total) {
+      this.listEl.innerHTML = "";
+      this.emptyEl.innerHTML = History._loadError
+        ? `<span style="color:var(--danger);">⚠ 加载失败：${escapeHtml(History._loadError)}</span><br><span style="font-size:11px;">检查 Supabase 是否跑过 schema.sql + 所有 migrations。</span>`
+        : (History._useRemote()
+            ? "云端无记录。点击 ▶ 新建决策 启动第一次分析。"
+            : "暂无决策。点击 ▶ 新建决策 启动第一次分析。");
+      this.updateNavBadge(0);
       return;
     }
-    const tabs = [];
-    this.windows.forEach((w, wid) => {
-      const isActive = wid === this.activeId;
-      const rating = w.runState.finalDecision?.rating;
-      const labelTxt = `${w.params.ticker} · ${w.params.trade_date}`;
-      tabs.push(`
-        <div class="window-tab ${isActive ? "active" : ""} ${w.status}" data-window-id="${wid}">
-          <span class="status-dot"></span>
-          <span class="label">${labelTxt}${rating ? " · " + rating : ""}</span>
-          <span class="close" data-close="${wid}" title="关闭">×</span>
-        </div>
-      `);
+    if (!items.length) {
+      this.listEl.innerHTML = "";
+      this.emptyEl.innerHTML = `<span class="muted">在 ${total} 条记录里没有匹配筛选条件的项。</span>`;
+      this.updateNavBadge(total);
+      return;
+    }
+    this.emptyEl.innerHTML = "";
+
+    this.listEl.innerHTML = items.map(e => this._renderRow(e)).join("");
+    this.listEl.querySelectorAll("li.decisions-row").forEach(li => {
+      li.addEventListener("click", ev => {
+        if (ev.target.closest("[data-act]") || ev.target.closest(".stars-rate")) return;
+        const id = li.dataset.id;
+        this._openItem(id);
+      });
     });
-    this.tabsEl.innerHTML = tabs.join("");
-    this.tabsEl.querySelectorAll(".window-tab").forEach(el => {
-      el.addEventListener("click", e => {
-        if (e.target.dataset.close) {
-          this.close(e.target.dataset.close);
-        } else {
-          this.activate(el.dataset.windowId);
+
+    // Per-row action buttons (pin / fav / del)
+    this.listEl.querySelectorAll("[data-act]").forEach(b => {
+      b.addEventListener("click", async ev => {
+        ev.stopPropagation();
+        const id = b.closest("li").dataset.id;
+        const entry = items.find(x => x.id === id);
+        if (!entry) return;
+        switch (b.dataset.act) {
+          case "pin":
+            await History.setPinned(id, !entry.pinned);
+            break;
+          case "fav":
+            if (typeof Favorites === "undefined") return;
+            await Favorites.toggle("decision", id, {
+              ticker: entry.ticker, trade_date: entry.trade_date, rating: entry.rating,
+            });
+            this.render();
+            break;
+          case "del":
+            if (!confirm(`确定删除 ${entry.ticker} @ ${entry.trade_date} 的决策？`)) return;
+            // If it's a live window, close it first; if it's also in history, remove.
+            if (this.windows.has(id)) this.close(id);
+            await History.delete(id);
+            break;
         }
       });
     });
+    // Inline 5-star rate
+    this.listEl.querySelectorAll(".stars-rate").forEach(group => {
+      const stars = group.querySelectorAll(".star");
+      stars.forEach((s, i) => {
+        s.addEventListener("click", async ev => {
+          ev.stopPropagation();
+          const id = group.closest("li").dataset.id;
+          const cur = items.find(e => e.id === id)?.user_rating || 0;
+          const next = cur === i + 1 ? 0 : i + 1;
+          await History.setRating(id, next);
+        });
+      });
+    });
+    this.updateNavBadge(total);
+
+    // Keep the main pane in sync: if active is still in the list, keep it
+    // selected and visible. If not, show the empty hint.
+    if (this.activeId && items.some(x => x.id === this.activeId)) {
+      if (this.mainEmpty) this.mainEmpty.style.display = "none";
+      this.windows.forEach((w, wid) => w.dom.classList.toggle("active", wid === this.activeId));
+    } else {
+      if (this.mainEmpty) this.mainEmpty.style.display = "";
+    }
   },
+
+  _renderRow(e) {
+    const status = this._statusOf(e);
+    const statusCls = { running: "running", done: "done", restored: "restored", error: "error", cancelled: "cancelled" }[status] || "done";
+    const ratingPill = e.rating
+      ? `<span class="rating-pill ${e.rating}">${escapeHtml(e.rating)}</span>`
+      : `<span class="rating-pill">${status === "running" ? "运行中" : "—"}</span>`;
+    const ts = e.completedAt || e.startedAt;
+    const tsTxt = ts ? new Date(ts).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+    const isFav = (typeof Favorites !== "undefined") && Favorites.isFavorited("decision", e.id);
+    const userRating = e.user_rating || 0;
+    const starsRate = `<span class="stars-rate">${
+      [1,2,3,4,5].map(n => `<span class="star ${userRating >= n ? "on" : ""}">★</span>`).join("")
+    }</span>`;
+    const isActive = e.id === this.activeId;
+    const llmBadge = e.llm_provider ? `<span class="badge">${escapeHtml(e.llm_provider)}</span>` : "";
+    return `
+      <li class="decisions-row ${statusCls} ${e.pinned ? "pinned" : ""} ${isActive ? "selected" : ""}" data-id="${e.id}">
+        <div class="row-head">
+          <span class="status-dot"></span>
+          <span class="row-ticker">${escapeHtml(e.ticker || "")}</span>
+          ${ratingPill}
+          <span class="row-actions">
+            <button data-act="pin" title="${e.pinned ? "取消置顶" : "置顶"}" class="${e.pinned ? "on" : ""}">${e.pinned ? "📌" : "📍"}</button>
+            <button data-act="fav" title="${isFav ? "取消收藏" : "收藏"}" class="${isFav ? "on" : ""}">${isFav ? "★" : "☆"}</button>
+            <button data-act="del" title="删除">🗑</button>
+          </span>
+        </div>
+        <div class="row-meta">
+          <span class="row-date">${escapeHtml(e.trade_date || "")}</span>
+          ${llmBadge}
+          ${e.research_depth ? `<span class="muted">${e.research_depth} 轮</span>` : ""}
+          <span class="row-when muted">${tsTxt}</span>
+        </div>
+        <div class="row-foot">${starsRate}</div>
+      </li>`;
+  },
+
+  /** Activate a row: reuse existing window or build from history entry. */
+  async _openItem(id) {
+    if (this.windows.has(id)) {
+      this.activate(id);
+      return;
+    }
+    // Need to fetch full entry (with runState) to restore the cockpit
+    const entry = await History.getEntry(id);
+    if (entry) this.openHistorical(entry);
+  },
+
+  renderKpi() {
+    if (!this.kpiEl) return;
+    const items = this._allItems();
+    const now = Date.now();
+    const running  = items.filter(e => this._statusOf(e) === "running").length;
+    const today    = items.filter(e => (e.completedAt || e.startedAt) && (now - new Date(e.completedAt || e.startedAt).getTime()) < 86400 * 1000).length;
+    const bullish  = items.filter(e => e.rating === "Buy" || e.rating === "Overweight").length;
+    const bearish  = items.filter(e => e.rating === "Sell" || e.rating === "Underweight").length;
+    this.kpiEl.innerHTML = `
+      <div class="kpi-cell"><div class="kpi-num">${items.length}</div><div class="kpi-label">总数</div></div>
+      <div class="kpi-cell"><div class="kpi-num ${running ? "running" : ""}">${running}</div><div class="kpi-label">运行中</div></div>
+      <div class="kpi-cell"><div class="kpi-num">${today}</div><div class="kpi-label">24h</div></div>
+      <div class="kpi-cell"><div class="kpi-num bull">${bullish}</div><div class="kpi-label">🟢 看多</div></div>
+      <div class="kpi-cell"><div class="kpi-num bear">${bearish}</div><div class="kpi-label">🔴 看空</div></div>
+    `;
+  },
+
+  renderFilters() {
+    if (!this.filtersEl) return;
+    const f = this.filters;
+    const all = this._allItems();
+    const chip = (label, active, attrs, count) =>
+      `<span class="filter-chip ${active ? "active" : ""}" ${attrs}>${label}${count != null ? `<span class="filter-chip-count">${count}</span>` : ""}</span>`;
+
+    const ratingRow = `
+      <div class="filter-group"><span class="filter-group-label">建议</span>
+        ${["Buy","Overweight","Hold","Underweight","Sell"].map(r =>
+          chip(r, f.rating.has(r), `data-toggle="rating" data-val="${r}"`,
+            all.filter(e => e.rating === r).length)
+        ).join("")}
+      </div>`;
+
+    const statusRow = `
+      <div class="filter-group"><span class="filter-group-label">状态</span>
+        ${[
+          ["running", "🟡 运行中"],
+          ["done",    "🟢 已完成"],
+          ["restored","🔵 已回看"],
+          ["error",   "🔴 失败"],
+        ].map(([v, lbl]) =>
+          chip(lbl, f.status.has(v), `data-toggle="status" data-val="${v}"`,
+            all.filter(e => this._statusOf(e) === v).length)
+        ).join("")}
+      </div>`;
+
+    const instRow = `
+      <div class="filter-group"><span class="filter-group-label">品种</span>
+        ${[
+          ["stock","📈 股票"],["etf","🧺 ETF"],["crypto","₿ 加密"],
+          ["commodity","🛢 商品"],["forex","💱 外汇"],
+        ].map(([id, lbl]) =>
+          chip(lbl, f.instrument.has(id), `data-toggle="instrument" data-val="${id}"`,
+            all.filter(e => this._instrument(e) === id).length)
+        ).join("")}
+      </div>`;
+
+    const providers = {};
+    all.forEach(e => { if (e.llm_provider) providers[e.llm_provider] = (providers[e.llm_provider] || 0) + 1; });
+    const provRow = Object.keys(providers).length ? `
+      <div class="filter-group"><span class="filter-group-label">LLM</span>
+        ${Object.entries(providers).sort((a, b) => b[1] - a[1]).map(([p, n]) =>
+          chip(p, f.provider.has(p), `data-toggle="provider" data-val="${p}"`, n)
+        ).join("")}
+      </div>` : "";
+
+    const dateRow = `
+      <div class="filter-group"><span class="filter-group-label">时间</span>
+        ${[["all","全部"],["7d","近 7 天"],["30d","近 30 天"],["90d","近 90 天"]].map(([v, lbl]) =>
+          chip(lbl, f.dateRange === v, `data-toggle="dateRange" data-val="${v}"`)
+        ).join("")}
+      </div>`;
+
+    const starsRow = `
+      <div class="filter-group"><span class="filter-group-label">评分</span>
+        ${[["all","全部"],["5","≥5★"],["4","≥4★"],["3","≥3★"],["rated","有评分"],["unrated","未评分"]].map(([v, lbl]) =>
+          chip(lbl, f.stars === v, `data-toggle="stars" data-val="${v}"`)
+        ).join("")}
+      </div>`;
+
+    const togglesRow = `
+      <div class="filter-group"><span class="filter-group-label">其它</span>
+        ${chip("📌 仅置顶", f.pinned, `data-toggle="pinned"`)}
+        ${chip("⭐ 仅收藏", f.favorited, `data-toggle="favorited"`)}
+      </div>`;
+
+    this.filtersEl.innerHTML = ratingRow + statusRow + instRow + provRow + dateRow + starsRow + togglesRow;
+    this.filtersEl.querySelectorAll(".filter-chip").forEach(el => {
+      el.addEventListener("click", () => {
+        const k = el.dataset.toggle;
+        const v = el.dataset.val;
+        if (k === "stars" || k === "dateRange") this.filters[k] = v;
+        else if (k === "pinned" || k === "favorited") this.filters[k] = !this.filters[k];
+        else {
+          if (this.filters[k].has(v)) this.filters[k].delete(v);
+          else this.filters[k].add(v);
+        }
+        this.render();
+      });
+    });
+  },
+
+  updateNavBadge(n) {
+    const b = document.getElementById("decisions-nav-badge");
+    if (!b) return;
+    if (n > 0) { b.textContent = n; b.style.display = ""; } else b.style.display = "none";
+  },
+};
+
+// Legacy alias — DecisionWindow.markStatus + renderFinal still bump the
+// list via this. Old WindowManager.create / openHistorical call sites
+// were updated to DecisionsPage directly, but we keep a thin shim so any
+// older callers / extensions don't crash.
+const WindowManager = {
+  get windows() { return DecisionsPage.windows; },
+  create(params)         { return DecisionsPage.create(params); },
+  openHistorical(entry)  { return DecisionsPage.openHistorical(entry); },
+  activate(id)           { return DecisionsPage.activate(id); },
+  close(id)              { return DecisionsPage.close(id); },
+  renderTabs()           { DecisionsPage.render(); },
+  init() {},
 };
 
 // =========================================================================
@@ -1628,7 +2293,7 @@ const History = {
         research_depth:  e.params?.research_depth,
       }));
     }
-    if (typeof HistoryPage !== "undefined") HistoryPage.render();
+    if (typeof DecisionsPage !== "undefined") DecisionsPage.render();
   },
 
   async setPinned(id, pinned) {
@@ -2433,17 +3098,20 @@ const Watchlist = {
           if (this.selectedId === entry.id) this.selectedId = null;
           await this.refresh();
         } else if (act === "open-decision") {
+          // Watchlist's "latest decision" card → jump to unified 决策 tab and
+          // select that row so the full cockpit (including the multi-horizon
+          // plan) renders in the main pane.
           const did = el.dataset.decisionId;
-          document.querySelector('nav.tabs button[data-tab="history"]').click();
-          if (typeof HistoryPage !== "undefined") setTimeout(() => HistoryPage.openDrawer(did), 100);
+          document.querySelector('nav.tabs button[data-tab="decisions"]').click();
+          if (typeof DecisionsPage !== "undefined") setTimeout(() => DecisionsPage._openItem(did), 100);
         } else if (act === "all-history") {
-          // Jump to history page filtered by this ticker
-          document.querySelector('nav.tabs button[data-tab="history"]').click();
-          if (typeof HistoryPage !== "undefined") {
+          // Jump to the unified 决策 tab pre-filtered by this ticker.
+          document.querySelector('nav.tabs button[data-tab="decisions"]').click();
+          if (typeof DecisionsPage !== "undefined") {
             setTimeout(() => {
-              HistoryPage.search = entry.ticker.toLowerCase();
-              if (HistoryPage.searchEl) HistoryPage.searchEl.value = entry.ticker;
-              HistoryPage.render();
+              DecisionsPage.search = entry.ticker.toLowerCase();
+              if (DecisionsPage.searchEl) DecisionsPage.searchEl.value = entry.ticker;
+              DecisionsPage.render();
             }, 100);
           }
         }
@@ -2476,500 +3144,16 @@ const Watchlist = {
 };
 
 // =========================================================================
-// HistoryPage — full-page history view with chip filters + detail drawer
+// HistoryPage — legacy shim. The original full-page history view was merged
+// into DecisionsPage; this object just exists so any cached external code
+// path that still references HistoryPage doesn't blow up. New code should
+// call DecisionsPage directly.
 // =========================================================================
 const HistoryPage = {
-  filters: {
-    rating: new Set(),       // Buy / Hold / Sell / Overweight / Underweight
-    instrument: new Set(),   // stock / etf / crypto / commodity / forex
-    provider: new Set(),     // anthropic / openai / deepseek / ...
-    depth: new Set(),        // 1 / 2 / 3 / 5
-    mode: new Set(),         // live / demo
-    stars: "all",            // all | 5 | 4 | 3 | rated | unrated
-    pinned: false,
-    favorited: false,
-    dateRange: "all",        // all | 7d | 30d | 90d
-  },
-  search: "",
-  sort: "time-desc",         // time-desc | time-asc | rating | ticker | depth-desc
-  _selectedId: null,
-
-  init() {
-    this.listEl    = document.getElementById("history-page-list");
-    this.emptyEl   = document.getElementById("history-page-empty");
-    this.filtersEl = document.getElementById("history-page-filters");
-    this.statsEl   = document.getElementById("history-page-stats");
-    this.searchEl  = document.getElementById("history-page-search");
-    this.drawerEl  = document.getElementById("history-detail-drawer");
-    this.backdropEl = document.getElementById("history-detail-backdrop");
-    if (!this.listEl) return;
-
-    // Belt-and-suspenders against Chrome autofill: if the browser jammed
-    // an email-shaped value into the search box (despite readonly +
-    // autocomplete=new-password + decoy input), wipe it. Run repeatedly
-    // because Chrome sometimes fills late, and again on tab activation.
-    this._stompAutofill = () => {
-      if (this.searchEl && /@/.test(this.searchEl.value || "")) {
-        this.searchEl.value = "";
-        this.search = "";
-        this.render();
-      }
-    };
-    requestAnimationFrame(this._stompAutofill);
-    [100, 300, 800, 2000].forEach(ms => setTimeout(this._stompAutofill, ms));
-    // When user clicks the 历史 tab, give Chrome one more chance and stomp again
-    document.querySelector('nav.tabs button[data-tab="history"]')?.addEventListener("click", () => {
-      [50, 200].forEach(ms => setTimeout(this._stompAutofill, ms));
-    });
-
-    this.searchEl.addEventListener("input", e => {
-      this.search = e.target.value.trim().toLowerCase(); this.render();
-    });
-    document.getElementById("history-page-clear-filters").addEventListener("click", () => {
-      this.filters.rating.clear();
-      this.filters.instrument.clear();
-      this.filters.provider.clear();
-      this.filters.depth.clear();
-      this.filters.mode.clear();
-      this.filters.stars = "all";
-      this.filters.pinned = false;
-      this.filters.favorited = false;
-      this.filters.dateRange = "all";
-      this.search = "";
-      this.searchEl.value = "";
-      this.render();
-    });
-    document.getElementById("history-page-refresh").addEventListener("click", async () => {
-      await History.refresh();   // refresh() calls our render
-    });
-    document.getElementById("history-page-clear-all").addEventListener("click", async () => {
-      if (!confirm("确定要清空所有历史决策？此操作无法撤销。")) return;
-      if (History._useRemote()) await window.Decisions.deleteAll();
-      else localStorage.removeItem(History.LOCAL_KEY);
-      await History.refresh();
-    });
-
-    // Drawer close
-    document.getElementById("history-detail-close").addEventListener("click", () => this.closeDrawer());
-    this.backdropEl.addEventListener("click", () => this.closeDrawer());
-    document.addEventListener("keydown", e => {
-      if (e.key === "Escape" && this.drawerEl.classList.contains("open")) this.closeDrawer();
-    });
-
-    this.render();
-  },
-
-  // --- aggregation helpers ----------------------------------------------
-  _direction(rating) {
-    const r = String(rating || "").toLowerCase();
-    if (r === "buy" || r === "overweight") return "bull";
-    if (r === "sell" || r === "underweight") return "bear";
-    return "hold";
-  },
-  _instrument(e) { return History._instrument(e); },
-
-  _providers() {
-    const counts = {};
-    History.cache.forEach(e => {
-      const p = e.llm_provider; if (p) counts[p] = (counts[p] || 0) + 1;
-    });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  },
-  _depths() {
-    const counts = {};
-    History.cache.forEach(e => {
-      const d = e.research_depth; if (d != null) counts[d] = (counts[d] || 0) + 1;
-    });
-    return Object.entries(counts).sort((a, b) => Number(a[0]) - Number(b[0]));
-  },
-  _modes() {
-    const counts = {};
-    History.cache.forEach(e => {
-      const m = e.mode || "auto"; counts[m] = (counts[m] || 0) + 1;
-    });
-    return Object.entries(counts);
-  },
-
-  // --- filtering --------------------------------------------------------
-  _filtered() {
-    const f = this.filters;
-    const now = Date.now();
-    return History.cache.filter(e => {
-      if (f.rating.size && !f.rating.has(e.rating)) return false;
-      if (f.instrument.size && !f.instrument.has(this._instrument(e))) return false;
-      if (f.provider.size && !f.provider.has(e.llm_provider)) return false;
-      if (f.depth.size && !f.depth.has(String(e.research_depth ?? ""))) return false;
-      if (f.mode.size && !f.mode.has(e.mode || "auto")) return false;
-      if (f.pinned && !e.pinned) return false;
-      if (f.favorited) {
-        if (typeof Favorites === "undefined" || !Favorites.isFavorited("decision", e.id)) return false;
-      }
-      if (f.stars !== "all") {
-        const s = e.user_rating || 0;
-        if (f.stars === "rated"   && s === 0) return false;
-        if (f.stars === "unrated" && s !== 0) return false;
-        if (/^\d+$/.test(f.stars) && s < parseInt(f.stars, 10)) return false;
-      }
-      if (f.dateRange !== "all") {
-        const t = new Date(e.completedAt || e.startedAt || e.createdAt).getTime();
-        const days = { "7d": 7, "30d": 30, "90d": 90 }[f.dateRange] || 0;
-        if (now - t > days * 86400 * 1000) return false;
-      }
-      if (this.search) {
-        const q = this.search;
-        const hay = `${e.ticker} ${e.user_note || ""} ${e.llm_provider || ""} ${e.deep_think_llm || ""}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  },
-
-  _sorted(items) {
-    const cmp = {
-      "time-desc":  (a, b) => new Date(b.completedAt || b.startedAt) - new Date(a.completedAt || a.startedAt),
-      "time-asc":   (a, b) => new Date(a.completedAt || a.startedAt) - new Date(b.completedAt || b.startedAt),
-      "rating":     (a, b) => (b.user_rating || 0) - (a.user_rating || 0)
-                              || new Date(b.completedAt || b.startedAt) - new Date(a.completedAt || a.startedAt),
-      "ticker":     (a, b) => (a.ticker || "").localeCompare(b.ticker || ""),
-      "depth-desc": (a, b) => (b.research_depth || 0) - (a.research_depth || 0),
-    }[this.sort] || ((a, b) => 0);
-    return [...items].sort(cmp);
-  },
-
-  // --- rendering --------------------------------------------------------
-  render() {
-    if (!this.listEl) return;
-    this.renderStats();
-    this.renderFilters();
-
-    const filtered = this._sorted(this._filtered());
-
-    if (!History.cache.length) {
-      this.listEl.innerHTML = "";
-      this.emptyEl.innerHTML = History._loadError
-        ? `<span style="color:var(--danger);">⚠ 加载失败：${escapeHtml(History._loadError)}</span><br><span style="font-size:11px;">检查 Supabase 是否跑过 schema.sql + 所有 migrations。</span>`
-        : (History._useRemote()
-            ? "云端无记录。完成一次分析后会自动保存。"
-            : "暂无记录。完成一次分析后会自动保存（仅当前浏览器；登录可云端同步）。");
-      this.updateNavBadge(0);
-      return;
-    }
-    if (!filtered.length) {
-      this.listEl.innerHTML = "";
-      this.emptyEl.innerHTML = `<span class="muted">在 ${History.cache.length} 条记录里没有匹配筛选条件的项。</span>`;
-      this.updateNavBadge(History.cache.length);
-      return;
-    }
-    this.emptyEl.innerHTML = "";
-
-    const head = `
-      <li class="col-head">
-        <span class="col-ticker">代码</span>
-        <span class="col-rating">建议</span>
-        <span class="col-date">日期</span>
-        <span class="col-depth">深度</span>
-        <span class="col-llm">LLM / 模型</span>
-        <span class="col-stars">评分</span>
-        <span class="col-when">完成时间</span>
-        <span class="col-actions" style="visibility:hidden;">操作</span>
-      </li>`;
-    this.listEl.innerHTML = head + filtered.map(e => this._row(e)).join("");
-    this.listEl.querySelectorAll("li.row").forEach(li => {
-      li.addEventListener("click", ev => {
-        if (ev.target.closest(".col-actions") || ev.target.closest(".stars-rate")) return;
-        this.openDrawer(li.dataset.id);
-      });
-    });
-    this.listEl.querySelectorAll("[data-act]").forEach(b => {
-      b.addEventListener("click", async ev => {
-        ev.stopPropagation();
-        const id = b.closest("li.row").dataset.id;
-        const entry = History.cache.find(x => x.id === id);
-        if (!entry) return;
-        switch (b.dataset.act) {
-          case "pin":
-            await History.setPinned(id, !entry.pinned);
-            break;
-          case "fav":
-            if (typeof Favorites === "undefined") return;
-            await Favorites.toggle("decision", id, {
-              ticker: entry.ticker, trade_date: entry.trade_date, rating: entry.rating,
-            });
-            this.render();
-            break;
-          case "del":
-            if (!confirm(`确定删除 ${entry.ticker} @ ${entry.trade_date} 的决策？`)) return;
-            await History.delete(id);
-            break;
-        }
-      });
-    });
-    // Inline 5-star rate
-    this.listEl.querySelectorAll(".stars-rate").forEach(group => {
-      const stars = group.querySelectorAll(".star");
-      stars.forEach((s, i) => {
-        s.addEventListener("click", async ev => {
-          ev.stopPropagation();
-          const id = group.closest("li.row").dataset.id;
-          const cur = (History.cache.find(e => e.id === id) || {}).user_rating || 0;
-          const next = cur === i + 1 ? 0 : i + 1;
-          await History.setRating(id, next);
-        });
-      });
-    });
-    this.updateNavBadge(History.cache.length);
-  },
-
-  _row(e) {
-    const dirEmoji = { bull: "🟢", bear: "🔴", hold: "⚪" }[this._direction(e.rating)] || "⚪";
-    const isFav = (typeof Favorites !== "undefined") && Favorites.isFavorited("decision", e.id);
-    const ts = new Date(e.completedAt || e.startedAt);
-    const llmBadge = e.llm_provider
-      ? `<span class="badge">${escapeHtml(e.llm_provider)}</span>`
-      : `<span class="badge">—</span>`;
-    const deep = e.deep_think_llm ? escapeHtml(e.deep_think_llm) : "";
-    const userRating = e.user_rating || 0;
-    const starsRate = `<span class="stars-rate">${
-      [1,2,3,4,5].map(n => `<span class="star ${userRating >= n ? "on" : ""}">★</span>`).join("")
-    }</span>`;
-    return `
-      <li class="row ${e.pinned ? "pinned" : ""}" data-id="${e.id}">
-        <span class="col-ticker">${dirEmoji} ${escapeHtml(e.ticker || "")}</span>
-        <span class="col-rating"><span class="rating-pill ${e.rating || ""}">${escapeHtml(e.rating || "—")}</span></span>
-        <span class="col-date">${escapeHtml(e.trade_date || "")}</span>
-        <span class="col-depth">${e.research_depth || "—"} 轮</span>
-        <span class="col-llm">${llmBadge}${deep ? `<span class="model" title="${deep}">${deep}</span>` : ""}</span>
-        <span class="col-stars">${starsRate}</span>
-        <span class="col-when">${ts.toLocaleString()}</span>
-        <span class="col-actions">
-          <button data-act="pin" title="${e.pinned ? "取消置顶" : "置顶"}" class="${e.pinned ? "on" : ""}">${e.pinned ? "📌" : "📍"}</button>
-          <button data-act="fav" title="${isFav ? "取消收藏" : "收藏"}" class="${isFav ? "on" : ""}">${isFav ? "★" : "☆"}</button>
-          <button data-act="del" title="删除">🗑</button>
-        </span>
-      </li>`;
-  },
-
-  renderStats() {
-    if (!this.statsEl) return;
-    const all = History.cache;
-    const now = Date.now();
-    const within = (days) => all.filter(e => now - new Date(e.completedAt || e.startedAt || e.createdAt).getTime() < days * 86400 * 1000).length;
-    this.statsEl.innerHTML = `
-      <div class="stat-cell"><div class="stat-num">${all.length}</div><div class="stat-label">总数</div></div>
-      <div class="stat-cell"><div class="stat-num">${within(7)}</div><div class="stat-label">7 天</div></div>
-      <div class="stat-cell"><div class="stat-num">${within(30)}</div><div class="stat-label">30 天</div></div>
-      <div class="stat-cell"><div class="stat-num">${all.filter(e => e.pinned).length}</div><div class="stat-label">置顶</div></div>
-    `;
-  },
-
-  renderFilters() {
-    if (!this.filtersEl) return;
-    const f = this.filters;
-    const chip = (label, active, clickAttr, count) =>
-      `<span class="filter-chip ${active ? "active" : ""}" ${clickAttr}>${label}${count != null ? `<span class="filter-chip-count">${count}</span>` : ""}</span>`;
-
-    const ratingRow = `
-      <div class="filter-group"><span class="filter-group-label">建议</span>
-        ${["Buy","Overweight","Hold","Underweight","Sell"].map(r =>
-          chip(r, f.rating.has(r), `data-toggle="rating" data-val="${r}"`,
-            History.cache.filter(e => e.rating === r).length)
-        ).join("")}
-      </div>`;
-
-    const instRow = `
-      <div class="filter-group"><span class="filter-group-label">品种</span>
-        ${[
-          ["stock","📈 股票"],["etf","🧺 ETF"],["crypto","₿ 加密"],
-          ["commodity","🛢 商品"],["forex","💱 外汇"],
-        ].map(([id, lbl]) =>
-          chip(lbl, f.instrument.has(id), `data-toggle="instrument" data-val="${id}"`,
-            History.cache.filter(e => this._instrument(e) === id).length)
-        ).join("")}
-      </div>`;
-
-    const providers = this._providers();
-    const provRow = providers.length ? `
-      <div class="filter-group"><span class="filter-group-label">LLM</span>
-        ${providers.map(([p, n]) =>
-          chip(p, f.provider.has(p), `data-toggle="provider" data-val="${p}"`, n)
-        ).join("")}
-      </div>` : "";
-
-    const depths = this._depths();
-    const depthRow = depths.length ? `
-      <div class="filter-group"><span class="filter-group-label">深度</span>
-        ${depths.map(([d, n]) =>
-          chip(`${d} 轮`, f.depth.has(String(d)), `data-toggle="depth" data-val="${d}"`, n)
-        ).join("")}
-      </div>` : "";
-
-    const modes = this._modes();
-    const modeRow = modes.length > 1 ? `
-      <div class="filter-group"><span class="filter-group-label">模式</span>
-        ${modes.map(([m, n]) =>
-          chip(m, f.mode.has(m), `data-toggle="mode" data-val="${m}"`, n)
-        ).join("")}
-      </div>` : "";
-
-    const dateRow = `
-      <div class="filter-group"><span class="filter-group-label">时间</span>
-        ${[["all","全部"],["7d","近 7 天"],["30d","近 30 天"],["90d","近 90 天"]].map(([v, lbl]) =>
-          chip(lbl, f.dateRange === v, `data-toggle="dateRange" data-val="${v}"`)
-        ).join("")}
-      </div>`;
-
-    const starsRow = `
-      <div class="filter-group"><span class="filter-group-label">评分</span>
-        ${[["all","全部"],["5","≥5★"],["4","≥4★"],["3","≥3★"],["rated","有评分"],["unrated","未评分"]].map(([v, lbl]) =>
-          chip(lbl, f.stars === v, `data-toggle="stars" data-val="${v}"`)
-        ).join("")}
-      </div>`;
-
-    const togglesRow = `
-      <div class="filter-group"><span class="filter-group-label">其它</span>
-        ${chip("📌 仅置顶", f.pinned, `data-toggle="pinned"`)}
-        ${chip("⭐ 仅收藏", f.favorited, `data-toggle="favorited"`)}
-        <span style="margin-left:auto;"></span>
-        <select id="history-page-sort" style="font-size:12px; padding:3px 8px; border-radius:6px; border:1px solid var(--border); background:var(--bg-card); color:var(--text);">
-          <option value="time-desc"  ${this.sort==="time-desc" ? "selected":""}>时间 ↓</option>
-          <option value="time-asc"   ${this.sort==="time-asc"  ? "selected":""}>时间 ↑</option>
-          <option value="rating"     ${this.sort==="rating"    ? "selected":""}>评分</option>
-          <option value="depth-desc" ${this.sort==="depth-desc"? "selected":""}>深度</option>
-          <option value="ticker"     ${this.sort==="ticker"    ? "selected":""}>代码</option>
-        </select>
-      </div>`;
-
-    this.filtersEl.innerHTML = ratingRow + instRow + provRow + depthRow + modeRow + dateRow + starsRow + togglesRow;
-
-    this.filtersEl.querySelectorAll(".filter-chip").forEach(el => {
-      el.addEventListener("click", () => {
-        const k = el.dataset.toggle;
-        const v = el.dataset.val;
-        if (k === "stars" || k === "dateRange") {
-          this.filters[k] = v;
-        } else if (k === "pinned" || k === "favorited") {
-          this.filters[k] = !this.filters[k];
-        } else {
-          if (this.filters[k].has(v)) this.filters[k].delete(v);
-          else this.filters[k].add(v);
-        }
-        this.render();
-      });
-    });
-    document.getElementById("history-page-sort").addEventListener("change", e => {
-      this.sort = e.target.value; this.render();
-    });
-  },
-
-  // --- Detail drawer ----------------------------------------------------
-  async openDrawer(id) {
-    this._selectedId = id;
-    const entry = await History.getEntry(id);
-    if (!entry) return;
-    document.getElementById("history-detail-title").textContent =
-      `${entry.ticker} · ${entry.trade_date}`;
-
-    const params = entry.params || {};
-    const dec = entry.runState?.finalDecision || {};
-    const usage = entry.runState?.usage || {};
-    const matched = entry.runState?.matchedStrategies || [];
-
-    const rows = (kvs) => kvs.filter(([_, v]) => v != null && v !== "")
-      .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`).join("");
-
-    const paramsBlock = `
-      <div class="section">
-        <h4>运行参数</h4>
-        <table class="params-table">${rows([
-          ["LLM Provider",   params.llm_provider],
-          ["深思模型",       params.deep_think_llm],
-          ["轻思模型",       params.quick_think_llm],
-          ["研究深度",       params.research_depth ? `${params.research_depth} 轮` : null],
-          ["运行模式",       params.mode],
-          ["输出语言",       params.output_language],
-          ["品种偏好",       params.instrument_hint || "不限"],
-          ["风险偏好",       params.risk_tolerance],
-          ["分析师选择",     Array.isArray(params.selected_analysts) ? params.selected_analysts.join(", ") : null],
-          ["策略关注",       Array.isArray(params.strategies_focus) ? params.strategies_focus.join(", ") : null],
-          ["开始时间",       entry.startedAt ? new Date(entry.startedAt).toLocaleString() : null],
-          ["完成时间",       entry.completedAt ? new Date(entry.completedAt).toLocaleString() : null],
-          ["状态",           entry.status],
-        ])}</table>
-      </div>`;
-
-    const usageBlock = (usage && (usage.tokens_in || usage.tokens_out || usage.elapsed_sec))
-      ? `<div class="section">
-          <h4>用量</h4>
-          <table class="params-table">${rows([
-            ["耗时",           usage.elapsed_sec ? `${usage.elapsed_sec}s` : null],
-            ["输入 token",     usage.tokens_in],
-            ["输出 token",     usage.tokens_out],
-            ["LLM 调用",       usage.llm_calls],
-            ["工具调用",       usage.tool_calls],
-          ])}</table>
-        </div>` : "";
-
-    const finalRaw = dec.raw_zh || dec.raw_en || "";
-    const finalBlock = finalRaw ? `
-      <div class="section">
-        <h4>最终决策</h4>
-        <div class="final-text">${mdLite(finalRaw)}</div>
-      </div>` : "";
-
-    const matchBlock = matched.length ? `
-      <div class="section">
-        <h4>匹配策略 (${matched.length})</h4>
-        ${matched.slice(0, 5).map(m => `
-          <div style="border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-bottom:6px;">
-            <div><strong>${escapeHtml(m.name || "")}</strong> · 匹配分 ${m.score}</div>
-            ${m.concrete_how ? `<div style="font-size:12px; margin-top:4px;">${escapeHtml(m.concrete_how)}</div>` : ""}
-          </div>`).join("")}
-      </div>` : "";
-
-    document.getElementById("history-detail-body").innerHTML =
-      paramsBlock + usageBlock + finalBlock + matchBlock;
-
-    // actions in drawer head
-    const isFav = (typeof Favorites !== "undefined") && Favorites.isFavorited("decision", id);
-    document.getElementById("history-detail-actions").innerHTML = `
-      <button class="icon-btn" data-detail-act="open" title="在新窗口打开">🪟 打开</button>
-      <button class="icon-btn ${entry.pinned ? "on" : ""}" data-detail-act="pin" title="${entry.pinned ? "取消置顶" : "置顶"}">${entry.pinned ? "📌" : "📍"}</button>
-      <button class="icon-btn ${isFav ? "on" : ""}" data-detail-act="fav" title="${isFav ? "取消收藏" : "收藏"}">${isFav ? "★" : "☆"}</button>
-    `;
-    document.getElementById("history-detail-actions").querySelectorAll("[data-detail-act]").forEach(b => {
-      b.addEventListener("click", async () => {
-        const act = b.dataset.detailAct;
-        if (act === "open") {
-          this.closeDrawer();
-          document.querySelector('nav.tabs button[data-tab="decision"]').click();
-          WindowManager.openHistorical(entry);
-        } else if (act === "pin") {
-          await History.setPinned(id, !entry.pinned);
-          this.openDrawer(id);
-        } else if (act === "fav") {
-          if (typeof Favorites !== "undefined") {
-            await Favorites.toggle("decision", id, { ticker: entry.ticker, trade_date: entry.trade_date, rating: entry.rating });
-          }
-          this.openDrawer(id);
-        }
-      });
-    });
-
-    this.drawerEl.classList.add("open");
-    this.backdropEl.classList.add("open");
-  },
-
-  closeDrawer() {
-    this.drawerEl.classList.remove("open");
-    this.backdropEl.classList.remove("open");
-    this._selectedId = null;
-  },
-
-  updateNavBadge(n) {
-    const b = document.getElementById("history-nav-badge");
-    if (!b) return;
-    if (n > 0) { b.textContent = n; b.style.display = ""; } else b.style.display = "none";
-  },
+  render() { if (typeof DecisionsPage !== "undefined") DecisionsPage.render(); },
+  openDrawer(id) { if (typeof DecisionsPage !== "undefined") DecisionsPage._openItem(id); },
+  init() {},
+  _legacyDeleted: true,
 };
 
 // =========================================================================
@@ -3013,7 +3197,7 @@ const Favorites = {
     this._updateCounts();
     // Cross-page rerenders so star/heart icons stay in sync
     if (typeof renderLibrary === "function") renderLibrary();
-    if (typeof HistoryPage !== "undefined") HistoryPage.render();
+    if (typeof DecisionsPage !== "undefined") DecisionsPage.render();
   },
 
   isFavorited(kind, refId) {
@@ -3121,8 +3305,8 @@ const Favorites = {
           const id = card.dataset.decisionId;
           const entry = await History.getEntry(id);
           if (!entry) { alert("找不到原始决策（可能已删除）"); return; }
-          document.querySelector('nav.tabs button[data-tab="decision"]').click();
-          WindowManager.openHistorical(entry);
+          document.querySelector('nav.tabs button[data-tab="decisions"]').click();
+          DecisionsPage.openHistorical(entry);
         });
       });
     } else if (this.activeTab === "opportunity") {
@@ -3671,7 +3855,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   initTabs();
   initLibrary();
   initDecisionForm();
-  WindowManager.init();
 
   // Wait for Supabase JS to be loaded (or skipped, if not configured).
   // auth.js triggers `supabase-ready` either way.
@@ -3680,12 +3863,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     window.addEventListener("supabase-ready", resolve, { once: true });
   });
 
-  // Init auth + UI + history (in order so History sees the auth state)
+  // Init auth + UI + history (in order so History sees the auth state).
+  // DecisionsPage.init() must come AFTER History.init() so its first
+  // render() sees the loaded cache, not an empty array.
   if (window.Auth) await window.Auth.init();
   AuthUI.init();
   await History.init();
   Favorites.init();
-  HistoryPage.init();
+  DecisionsPage.init();
   Watchlist.init();
   Opportunities.init();
   Profile.init();
