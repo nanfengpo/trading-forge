@@ -6,17 +6,11 @@ multi-section synthesis. The frontend collects the user's decisions (which are
 already RLS-scoped in Supabase), trims them, then POSTs the bundle here.
 
 We deliberately keep the persistence layer on the frontend (Supabase + RLS) —
-this module is stateless compute only. Same pattern as horizon_planner.py.
+this module is stateless compute only.
 
-Sections produced:
-
-  intro       — basic介绍 + 最新资讯 (1-2 paragraphs)
-  dimensions  — { fundamentals, news, technical, sentiment } each with
-                summary text + key bullet insights + signal (bullish/bearish/neutral)
-  scenarios   — { base, bull, bear } each with probability + 可证伪预测 + 失效条件,
-                plus a top-level checklist[] of observation items
-  horizons    — { short (1-2m), mid (3-6m), long (6m+) } each with
-                trend + target_price + confidence + strategy + key_risks
+Return contract (NEW): always a dict with either ``report`` (success) or
+``error`` (failure with diagnostic). Server surfaces the error to the UI so
+the user can see what went wrong instead of "unknown failure".
 """
 
 from __future__ import annotations
@@ -31,68 +25,65 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Provider routing — mirrors horizon_planner.py so we stay consistent.
+# Provider routing
 # ---------------------------------------------------------------------------
+#
+# Two call shapes are supported:
+#   - openai_compat: standard OpenAI Chat Completions (OpenAI itself + DeepSeek
+#     + Qwen + Kimi + GLM + Google Gemini's OpenAI-compat endpoint)
+#   - anthropic:     Anthropic Messages API (Claude) via the anthropic SDK
+#
+# Fallback order tries the user's chosen provider first, then walks down the
+# priority list. Each candidate with a configured env key is attempted; if the
+# LLM call or JSON parse fails, we capture the error string and move on.
 
-_PROVIDER_BASES: Dict[str, Dict[str, str]] = {
-    "openai":    {"base_url": "https://api.openai.com/v1",                              "env": "OPENAI_API_KEY"},
-    "deepseek":  {"base_url": "https://api.deepseek.com",                               "env": "DEEPSEEK_API_KEY"},
-    "qwen":      {"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "env": "DASHSCOPE_API_KEY"},
-    "kimi":      {"base_url": "https://api.moonshot.cn/v1",                             "env": "MOONSHOT_API_KEY"},
-    "glm":       {"base_url": "https://api.z.ai/api/paas/v4/",                          "env": "ZHIPU_API_KEY"},
+_OPENAI_COMPAT: Dict[str, Dict[str, str]] = {
+    "openai":    {"base_url": "https://api.openai.com/v1",                                "env": "OPENAI_API_KEY",   "default_model": "gpt-5.4-mini"},
+    "deepseek":  {"base_url": "https://api.deepseek.com",                                 "env": "DEEPSEEK_API_KEY", "default_model": "deepseek-chat"},
+    "qwen":      {"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",   "env": "DASHSCOPE_API_KEY","default_model": "qwen-plus"},
+    "kimi":      {"base_url": "https://api.moonshot.cn/v1",                               "env": "MOONSHOT_API_KEY", "default_model": "moonshot-v1-32k"},
+    "glm":       {"base_url": "https://api.z.ai/api/paas/v4/",                            "env": "ZHIPU_API_KEY",    "default_model": "glm-4.7-flash"},
+    "google":    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "env": "GOOGLE_API_KEY",   "default_model": "gemini-3.1-flash"},
 }
 
-_FALLBACK_ORDER = ["deepseek", "glm", "qwen", "kimi", "openai"]
+_ANTHROPIC_CFG = {"env": "ANTHROPIC_API_KEY", "default_model": "claude-sonnet-4-6"}
+
+_FALLBACK_ORDER = ["anthropic", "deepseek", "glm", "qwen", "google", "kimi", "openai"]
 
 
-def _pick_client(llm_provider: str, deep_model: str):
-    try:
-        from openai import OpenAI  # type: ignore
-    except ImportError:
-        logger.info("openai SDK not installed — comprehensive report unavailable")
-        return None
+def _provider_env(name: str) -> Optional[str]:
+    if name == "anthropic":
+        return _ANTHROPIC_CFG["env"]
+    cfg = _OPENAI_COMPAT.get(name)
+    return cfg["env"] if cfg else None
 
+
+def _provider_default_model(name: str) -> str:
+    if name == "anthropic":
+        return _ANTHROPIC_CFG["default_model"]
+    cfg = _OPENAI_COMPAT.get(name)
+    return cfg["default_model"] if cfg else ""
+
+
+def _resolve_candidates(llm_provider: str) -> List[str]:
     chosen = (llm_provider or "").lower().strip()
     candidates: List[str] = []
-    if chosen in _PROVIDER_BASES:
+    if chosen and _provider_env(chosen) and os.environ.get(_provider_env(chosen) or ""):
         candidates.append(chosen)
     for p in _FALLBACK_ORDER:
-        if p not in candidates:
+        env = _provider_env(p)
+        if p not in candidates and env and os.environ.get(env):
             candidates.append(p)
-
-    for p in candidates:
-        cfg = _PROVIDER_BASES[p]
-        key = os.environ.get(cfg["env"])
-        if not key:
-            continue
-        try:
-            client = OpenAI(api_key=key, base_url=cfg["base_url"])
-        except Exception as e:
-            logger.warning("comp-report: failed to init %s: %s", p, e)
-            continue
-        if p == chosen and deep_model:
-            model = deep_model
-        else:
-            model = {
-                "openai":   "gpt-5.4-mini",
-                "deepseek": "deepseek-chat",
-                "qwen":     "qwen-plus",
-                "kimi":     "moonshot-v1-32k",
-                "glm":      "glm-4.7-flash",
-            }.get(p, deep_model or "")
-        if not model:
-            continue
-        return client, model, p
-    return None
+    return candidates
 
 
 # ---------------------------------------------------------------------------
-# Decision distillation — collapse run_state into a compact text snapshot.
+# Decision distillation
 # ---------------------------------------------------------------------------
 
-_MAX_DECISIONS = 12          # cap so the prompt stays within context window
-_MAX_REPORT_CHARS = 1400      # per-section trim
-_MAX_FINAL_CHARS = 2200       # final decision text — keep a bit more
+_MAX_DECISIONS = 12
+_MAX_REPORT_CHARS = 1400
+_MAX_FINAL_CHARS = 2200
 
 
 def _trim(text: Optional[str], limit: int) -> str:
@@ -105,13 +96,6 @@ def _trim(text: Optional[str], limit: int) -> str:
 
 
 def _distill_decision(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Pull the substantive fields out of a single decision payload.
-
-    The frontend sends each decision as `{id, ticker, trade_date, rating,
-    completedAt, runState: {...}, params: {...}}`. We pluck only the
-    high-signal markdown blobs so the LLM has enough context without us
-    overloading it with metadata.
-    """
     rs = d.get("runState") or d.get("run_state") or {}
     reports = rs.get("reports") or {}
     final = rs.get("finalDecision") or {}
@@ -128,22 +112,23 @@ def _distill_decision(d: Dict[str, Any]) -> Dict[str, Any]:
             "llm_provider":   (d.get("params") or {}).get("llm_provider"),
         },
         "reports": {
-            "fundamentals": _trim(reports.get("fundamentals_report"), _MAX_REPORT_CHARS),
-            "news":         _trim(reports.get("news_report"),         _MAX_REPORT_CHARS),
-            "market":       _trim(reports.get("market_report"),       _MAX_REPORT_CHARS),
-            "sentiment":    _trim(reports.get("sentiment_report"),    _MAX_REPORT_CHARS),
-            "research_plan":      _trim(reports.get("investment_plan"),         _MAX_REPORT_CHARS),
-            "trader_plan":        _trim(reports.get("trader_investment_plan"),  _MAX_REPORT_CHARS),
+            "fundamentals":  _trim(reports.get("fundamentals_report"),       _MAX_REPORT_CHARS),
+            "news":          _trim(reports.get("news_report"),               _MAX_REPORT_CHARS),
+            "market":        _trim(reports.get("market_report"),             _MAX_REPORT_CHARS),
+            "sentiment":     _trim(reports.get("sentiment_report"),          _MAX_REPORT_CHARS),
+            "research_plan": _trim(reports.get("investment_plan"),           _MAX_REPORT_CHARS),
+            "trader_plan":   _trim(reports.get("trader_investment_plan"),    _MAX_REPORT_CHARS),
         },
         "final": {
-            "rating":  final.get("rating"),
-            "text":    _trim(final.get("raw_zh") or final.get("raw_en") or final.get("raw"), _MAX_FINAL_CHARS),
-            "trader":  _trim(final.get("trader_plan"),  _MAX_REPORT_CHARS),
-            "research":_trim(final.get("research_plan"), _MAX_REPORT_CHARS),
+            "rating":   final.get("rating"),
+            "text":     _trim(final.get("raw_zh") or final.get("raw_en") or final.get("raw"), _MAX_FINAL_CHARS),
+            "trader":   _trim(final.get("trader_plan"),   _MAX_REPORT_CHARS),
+            "research": _trim(final.get("research_plan"), _MAX_REPORT_CHARS),
         },
         "horizon_plan_summary": _trim((horizon or {}).get("summary"), 400),
         "matched_strategies": [
-            {"id": s.get("id"), "name": s.get("name"), "cat": s.get("cat")}
+            {"id": s.get("id"), "name": s.get("name"), "cat": s.get("cat"),
+             "horizon": s.get("horizon"), "view": s.get("view"), "score": s.get("score")}
             for s in (matched.get("items") or [])[:5]
         ],
     }
@@ -163,6 +148,7 @@ _SYSTEM_PROMPT = """你是一位顶级买方组合经理与卖方首席研究员
 3. **要做时间序列推演** — 多次决策按时间排序，关注观点演化（强化 / 反转 / 漂移），在 intro 和 dimensions 里都要体现"上一次怎么看 / 这次怎么看 / 变化驱动"。
 4. **可证伪** — 所有预测必须可证伪：写明价格水平、时间窗口、关键数据节点（财报、宏观、催化事件）。
 5. **不要堆数据** — 同类信号合并为 1-2 条；优先输出"反直觉"或"分歧点"。
+6. **horizons.{short|mid|long}.strategy** 必须**包含完整可执行方案**：建仓节奏（分批/价位）+ 仓位（%NAV）+ 止损价 + 减仓阶梯 + 需盯的信号。若 candidate_strategies 里有合适的策略库匹配项，把策略名 + 关键参数嵌入 strategy 字段，**不要**单独保留 strategies 字段。
 
 输出 JSON 结构（所有字段都必须存在；为空时填 "" 或 []）：
 
@@ -180,7 +166,7 @@ _SYSTEM_PROMPT = """你是一位顶级买方组合经理与卖方首席研究员
       "highlights": ["3-5 条要点，含具体数字"],
       "evolution": "历次决策中基本面判断的演化（≤60 字）"
     },
-    "news": { 同结构 },
+    "news":      { 同结构 },
     "technical": { 同结构 — 这里说 'market technicals' 即价格 / 量能 / 指标 / 趋势 },
     "sentiment": { 同结构 — 情绪 / 社交 / 资金面 / 期权偏度 }
   },
@@ -196,7 +182,7 @@ _SYSTEM_PROMPT = """你是一位顶级买方组合经理与卖方首席研究员
     "bull": { 同结构 },
     "bear": { 同结构 },
     "checklist": [
-      "[5-8 条] 未来需要持续观察的清单 — 每条具体到指标 / 数据源 / 时间节点，例如 '下一季度 cloud 收入 yoy > 35%' 或 'CPI 6 月读数低于 3.2%'"
+      "[5-8 条] 未来需要持续观察的清单 — 每条具体到指标 / 数据源 / 时间节点"
     ]
   },
   "horizons": {
@@ -206,7 +192,7 @@ _SYSTEM_PROMPT = """你是一位顶级买方组合经理与卖方首席研究员
       "target_price": "$108-$115 或 $112（用美元符号；港股 / A 股可用其他货币符号）",
       "confidence": "high|medium|low",
       "summary": "1-2 句走势预测",
-      "strategy": "1-3 句执行策略（建仓节奏 / 仓位 / 止损 / 减仓位置）",
+      "strategy": "完整可执行方案：建仓节奏 + 仓位 + 止损 + 减仓阶梯 + 需盯的信号 + 关联的策略库方案 (3-5 句)",
       "key_risks": ["2-3 条该周期内最关键的风险"]
     },
     "mid":  { 同结构, label="中期 (3-6 个月)" },
@@ -221,17 +207,12 @@ _SYSTEM_PROMPT = """你是一位顶级买方组合经理与卖方首席研究员
 """
 
 
-def _build_user_payload(
-    ticker: str,
-    quote: Dict[str, Any],
-    decisions: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+def _build_user_payload(ticker: str, quote: Dict[str, Any], decisions: List[Dict[str, Any]]) -> Dict[str, Any]:
     sorted_decisions = sorted(
         decisions,
         key=lambda d: d.get("completed_at") or d.get("completedAt") or "",
         reverse=True,
     )[:_MAX_DECISIONS]
-
     return {
         "ticker": ticker,
         "now_quote": {
@@ -252,6 +233,70 @@ def _build_user_payload(
 
 
 # ---------------------------------------------------------------------------
+# LLM dispatch
+# ---------------------------------------------------------------------------
+
+def _strip_fence(raw: str) -> str:
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", raw, flags=re.S).strip()
+    return raw
+
+
+def _parse_report(raw: str) -> Dict[str, Any]:
+    raw = _strip_fence(raw)
+    return json.loads(raw)
+
+
+def _call_openai_compat(provider: str, model: str, payload: Dict[str, Any]) -> str:
+    """Send the prompt via an OpenAI-compatible Chat Completions endpoint."""
+    from openai import OpenAI  # type: ignore
+    cfg = _OPENAI_COMPAT[provider]
+    key = os.environ[cfg["env"]]
+    client = OpenAI(api_key=key, base_url=cfg["base_url"])
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user",   "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        temperature=0.4,
+        max_tokens=5500,
+        timeout=120,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def _call_anthropic(model: str, payload: Dict[str, Any]) -> str:
+    """Send the prompt via the Anthropic Messages API (Claude)."""
+    try:
+        import anthropic  # type: ignore
+    except ImportError as e:
+        raise RuntimeError("anthropic SDK not installed") from e
+    key = os.environ[_ANTHROPIC_CFG["env"]]
+    client = anthropic.Anthropic(api_key=key, timeout=120)
+    resp = client.messages.create(
+        model=model,
+        max_tokens=5500,
+        temperature=0.4,
+        system=_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+    )
+    parts: List[str] = []
+    for blk in resp.content or []:
+        text = getattr(blk, "text", None)
+        if text:
+            parts.append(text)
+    return "".join(parts).strip()
+
+
+def _dispatch(provider: str, model: str, payload: Dict[str, Any]) -> str:
+    if provider == "anthropic":
+        return _call_anthropic(model, payload)
+    return _call_openai_compat(provider, model, payload)
+
+
+# ---------------------------------------------------------------------------
 # Public entry
 # ---------------------------------------------------------------------------
 
@@ -261,22 +306,27 @@ def generate(
     quote: Optional[Dict[str, Any]] = None,
     llm_provider: str = "",
     deep_model: str = "",
-) -> Optional[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """Synthesise a comprehensive report.
 
-    Returns the structured dict on success, ``None`` on any failure. Callers
-    are expected to degrade gracefully (the UI shows a fallback message).
+    Returns:
+      Success: ``{"ok": True, "report": {...}, "provider": str, "model": str}``
+      Failure: ``{"ok": False, "error": str, "tried": [{"provider","model","error"}, ...]}``
     """
     if os.environ.get("COMPREHENSIVE_REPORT", "1").lower() in ("0", "false", "off"):
-        return None
-    if not ticker or not decisions:
-        return None
+        return {"ok": False, "error": "COMPREHENSIVE_REPORT disabled via env"}
+    if not ticker:
+        return {"ok": False, "error": "missing ticker"}
+    if not decisions:
+        return {"ok": False, "error": "no decisions provided — generate at least one decision first"}
 
-    picked = _pick_client(llm_provider, deep_model)
-    if not picked:
-        logger.info("comp-report: no usable provider key in env")
-        return None
-    client, model, provider_used = picked
+    candidates = _resolve_candidates(llm_provider)
+    if not candidates:
+        return {
+            "ok": False,
+            "error": "no LLM provider API key configured — set ANTHROPIC_API_KEY / "
+                     "DEEPSEEK_API_KEY / OPENAI_API_KEY / etc.",
+        }
 
     if not quote:
         try:
@@ -289,33 +339,33 @@ def generate(
 
     payload = _build_user_payload(ticker, quote or {}, decisions)
 
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user",   "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0.4,
-            max_tokens=5500,
-            timeout=120,
-        )
-        raw = (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        logger.warning("comp-report LLM call failed (%s/%s): %s", provider_used, model, e)
-        return None
+    tried: List[Dict[str, str]] = []
+    chosen = (llm_provider or "").lower().strip()
+    for provider in candidates:
+        model = deep_model if (provider == chosen and deep_model) else _provider_default_model(provider)
+        if not model:
+            tried.append({"provider": provider, "model": "(unknown)", "error": "no default model"})
+            continue
+        try:
+            raw = _dispatch(provider, model, payload)
+        except Exception as e:
+            msg = str(e)[:300]
+            tried.append({"provider": provider, "model": model, "error": f"LLM call: {msg}"})
+            logger.warning("comp-report LLM call failed (%s/%s): %s", provider, model, msg)
+            continue
+        try:
+            report = _parse_report(raw)
+        except Exception as e:
+            msg = f"JSON parse: {e}; head={raw[:160]!r}"
+            tried.append({"provider": provider, "model": model, "error": msg[:300]})
+            logger.warning("comp-report parse failed (%s/%s): %s", provider, model, msg[:200])
+            continue
 
-    if raw.startswith("```"):
-        raw = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", raw, flags=re.S).strip()
+        for key in ("intro", "dimensions", "scenarios", "horizons", "meta"):
+            report.setdefault(key, {})
+        report["_provider"] = provider
+        report["_model"] = model
+        return {"ok": True, "report": report, "provider": provider, "model": model}
 
-    try:
-        report = json.loads(raw)
-    except Exception as e:
-        logger.warning("comp-report JSON parse failed: %s; raw[:200]=%s", e, raw[:200])
-        return None
-
-    for key in ("intro", "dimensions", "scenarios", "horizons", "meta"):
-        report.setdefault(key, {})
-    report.setdefault("_provider", provider_used)
-    report.setdefault("_model", model)
-    return report
+    summary = "; ".join(f"{t['provider']}({t['model']}): {t['error']}" for t in tried) or "no providers attempted"
+    return {"ok": False, "error": f"all providers failed — {summary}", "tried": tried}

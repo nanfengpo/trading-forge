@@ -7,8 +7,11 @@ python-dotenv>=1.0
 requests>=2.31
 
 # --- translation layer (uses OpenAI-compatible API for any of:
-#     OpenAI / DeepSeek / Qwen / GLM / Kimi) ---
+#     OpenAI / DeepSeek / Qwen / GLM / Kimi / Google Gemini) ---
 openai>=1.40
+
+# --- Anthropic Claude (used by comprehensive_report when ANTHROPIC_API_KEY is set) ---
+anthropic>=0.40
 
 # --- optional: Supabase JWT verification ---
 PyJWT>=2.8

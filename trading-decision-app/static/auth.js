@@ -254,35 +254,121 @@
   };
 
   // -------------------------------------------------- ComprehensiveReports
-  // One row per (user, ticker). Stores the LLM-aggregated synthesis of all
-  // historical decisions for that ticker. RLS-scoped by Supabase. Falls back
-  // to localStorage when the user is anonymous.
+  // History-keeping store: each generation = a new row (no upsert). The user
+  // can browse past versions. RLS-scoped by Supabase; falls back to a
+  // localStorage ring buffer when anonymous.
+  //
+  // Local storage shape:  { "TICKER": [ row, row, ... newest first ] }
+  // Each "row" mirrors the Supabase row schema (sections, model, status,
+  // generated_at, …) plus a synthetic `id` (local-…). Capped at 20 per ticker.
   const ComprehensiveReports = {
     LOCAL_KEY: "tda:comp-reports",
+    LOCAL_MAX_PER_TICKER: 20,
 
-    async get(ticker) {
-      if (!client || !session) {
-        const local = JSON.parse(localStorage.getItem(this.LOCAL_KEY) || "{}");
-        return local[(ticker || "").toUpperCase()] || null;
-      }
-      const { data, error } = await client
-        .from("comprehensive_reports")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .eq("ticker", (ticker || "").toUpperCase())
-        .maybeSingle();
+    _tableMissing: false,
+
+    // ---- low-level Supabase ↔ localStorage plumbing ---------------------
+    async _supaSelect(builder) {
+      const { data, error } = await builder;
       if (error) {
         if (error.code === "42P01" || /relation .* does not exist/i.test(error.message)) {
-          console.warn("[comp-reports] table missing — run migration 0007");
+          this._tableMissing = true;
+          console.warn("[comp-reports] table missing — run migration 0007 + 0008");
           return null;
         }
-        console.error("[comp-reports] get", error);
+        console.error("[comp-reports]", error);
         return null;
       }
       return data;
     },
 
-    async upsert(ticker, payload) {
+    _readLocal() {
+      try { return JSON.parse(localStorage.getItem(this.LOCAL_KEY) || "{}"); }
+      catch { return {}; }
+    },
+
+    _writeLocal(all) {
+      try { localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all)); return true; }
+      catch (e) { console.warn("comp-reports local save failed", e); return false; }
+    },
+
+    _localPush(ticker, row) {
+      const all = this._readLocal();
+      const tu = (ticker || "").toUpperCase();
+      const list = all[tu] || [];
+      list.unshift(row);
+      if (list.length > this.LOCAL_MAX_PER_TICKER) list.length = this.LOCAL_MAX_PER_TICKER;
+      all[tu] = list;
+      this._writeLocal(all);
+      return row;
+    },
+
+    _localPatch(id, patch) {
+      const all = this._readLocal();
+      for (const tu of Object.keys(all)) {
+        const list = all[tu] || [];
+        const i = list.findIndex(r => r.id === id);
+        if (i >= 0) {
+          list[i] = { ...list[i], ...patch, updated_at: new Date().toISOString() };
+          this._writeLocal(all);
+          return list[i];
+        }
+      }
+      return null;
+    },
+
+    // ---- public API -----------------------------------------------------
+
+    /** Latest ready/generating/error row for a ticker (one record). */
+    async getLatest(ticker) {
+      const tu = (ticker || "").toUpperCase();
+      if (!client || !session) {
+        const all = this._readLocal();
+        return (all[tu] || [])[0] || null;
+      }
+      const data = await this._supaSelect(
+        client.from("comprehensive_reports").select("*")
+          .eq("user_id", session.user.id).eq("ticker", tu)
+          .order("generated_at", { ascending: false }).limit(1)
+      );
+      return (data && data[0]) || null;
+    },
+
+    /** Back-compat alias used by older callers — same as getLatest. */
+    async get(ticker) { return this.getLatest(ticker); },
+
+    /** Full history for a ticker, newest first. */
+    async listHistory(ticker, limit = 20) {
+      const tu = (ticker || "").toUpperCase();
+      if (!client || !session) {
+        const all = this._readLocal();
+        return (all[tu] || []).slice(0, limit);
+      }
+      const data = await this._supaSelect(
+        client.from("comprehensive_reports").select("*")
+          .eq("user_id", session.user.id).eq("ticker", tu)
+          .order("generated_at", { ascending: false }).limit(limit)
+      );
+      return data || [];
+    },
+
+    async getById(id) {
+      if (!client || !session) {
+        const all = this._readLocal();
+        for (const tu of Object.keys(all)) {
+          const hit = (all[tu] || []).find(r => r.id === id);
+          if (hit) return hit;
+        }
+        return null;
+      }
+      const data = await this._supaSelect(
+        client.from("comprehensive_reports").select("*").eq("id", id).limit(1)
+      );
+      return (data && data[0]) || null;
+    },
+
+    /** Insert a brand-new version row. Returns the inserted row (with id). */
+    async insert(ticker, payload) {
       const tu = (ticker || "").toUpperCase();
       const row = {
         ticker: tu,
@@ -293,31 +379,85 @@
         quote_snapshot: payload.quote_snapshot || {},
         status: payload.status || "ready",
         error_message: payload.error_message || null,
+        is_pinned: !!payload.is_pinned,
         generated_at: payload.generated_at || new Date().toISOString(),
       };
       if (!client || !session) {
-        const all = JSON.parse(localStorage.getItem(this.LOCAL_KEY) || "{}");
-        all[tu] = { ...row, user_id: "local", updated_at: new Date().toISOString() };
-        try { localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all)); }
-        catch (e) { console.warn("comp-reports local save failed", e); }
-        return all[tu];
+        const local = {
+          ...row,
+          id: "local-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          user_id: "local",
+          updated_at: new Date().toISOString(),
+        };
+        return this._localPush(tu, local);
       }
       const { data, error } = await client
         .from("comprehensive_reports")
-        .upsert({ ...row, user_id: session.user.id }, { onConflict: "user_id,ticker" })
+        .insert({ ...row, user_id: session.user.id })
         .select()
-        .maybeSingle();
-      if (error) { console.error("[comp-reports] upsert", error); return null; }
+        .single();
+      if (error) {
+        if (error.code === "42P01" || /relation .* does not exist/i.test(error.message)) {
+          this._tableMissing = true;
+          console.warn("[comp-reports] table missing — run migration 0007 + 0008. Falling back to localStorage.");
+          const local = {
+            ...row, id: "local-" + Date.now().toString(36), user_id: "local",
+            updated_at: new Date().toISOString(),
+          };
+          return this._localPush(tu, local);
+        }
+        if (/column .*is_pinned.* does not exist/i.test(error.message || "")) {
+          console.warn("[comp-reports] is_pinned column missing — run migration 0008. Retrying without it.");
+          const { is_pinned, ...rest } = row;
+          const r2 = await client.from("comprehensive_reports").insert({ ...rest, user_id: session.user.id }).select().single();
+          if (r2.error) { console.error("[comp-reports] insert retry", r2.error); return null; }
+          return r2.data;
+        }
+        console.error("[comp-reports] insert", error);
+        return null;
+      }
       return data;
     },
 
-    async markGenerating(ticker) {
-      const cur = await this.get(ticker);
-      return this.upsert(ticker, {
-        ...(cur || {}),
-        sections: (cur && cur.sections) || {},
-        status: "generating",
-      });
+    /** Patch one row by id (status, sections, error_message, is_pinned, …). */
+    async updateRow(id, patch) {
+      if (!id) return null;
+      if (!client || !session || String(id).startsWith("local-")) {
+        return this._localPatch(id, patch);
+      }
+      const { data, error } = await client
+        .from("comprehensive_reports")
+        .update(patch)
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) { console.error("[comp-reports] update", error); return null; }
+      return data;
+    },
+
+    async setPinned(id, pinned) {
+      return this.updateRow(id, { is_pinned: !!pinned });
+    },
+
+    async deleteRow(id) {
+      if (!id) return false;
+      if (!client || !session || String(id).startsWith("local-")) {
+        const all = this._readLocal();
+        for (const tu of Object.keys(all)) {
+          const before = (all[tu] || []).length;
+          all[tu] = (all[tu] || []).filter(r => r.id !== id);
+          if (all[tu].length !== before) { this._writeLocal(all); return true; }
+        }
+        return false;
+      }
+      const { error } = await client.from("comprehensive_reports").delete().eq("id", id);
+      if (error) { console.error("[comp-reports] delete", error); return false; }
+      return true;
+    },
+
+    /** Convenience used by the UI to create a "generating" placeholder. */
+    async markGenerating(ticker, payload = {}) {
+      return this.insert(ticker, { ...payload, sections: {}, status: "generating" });
     },
   };
 

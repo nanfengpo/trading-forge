@@ -873,16 +873,11 @@ class DecisionWindow {
         if (this.es) { this.es.close(); this.es = null; }
         // Save decision FIRST so usage_events.decision_id FK has its target;
         // otherwise the FK constraint trips and tokens are never recorded.
+        //
+        // NB: the watchlist 综合报告 auto-trigger was REMOVED on 2026-05-22 —
+        // the user now generates it manually via the button on the 自选 page.
         saveHistorySafely(this)
           .then(() => this._flushUsageEvents())
-          .then(() => {
-            // Regenerate the watchlist comprehensive report for this ticker
-            // in the background. Fire-and-forget — UI degrades gracefully.
-            const t = this.params?.ticker;
-            if (t && window.ComprehensiveReport) {
-              window.ComprehensiveReport.autoRegenerate(t);
-            }
-          })
           .catch(e => console.warn("post-complete persistence", e));
         break;
       case "error":
@@ -1087,36 +1082,13 @@ class DecisionWindow {
       parsed.volatility && `<span class="tag">${VIEW_NAMES[parsed.volatility] || parsed.volatility}</span>`,
     ].filter(Boolean).join("");
 
-    const matchHtml = matched.map((m, i) => `
-      <div class="match-card">
-        <div class="rank">${i + 1}</div>
-        <div class="info">
-          <div>
-            <span class="title">${m.name}</span>
-            <span class="en">${m.en || ""}</span>
-            <span class="tag cat-${m.cat}" style="margin-left:6px;">${CAT_NAMES[m.cat] || m.cat}</span>
-          </div>
-          <div class="desc">${m.desc || ""}</div>
-          <div class="reasons">${(m.reasons || []).map(r => `<span class="reason">${r}</span>`).join("")}</div>
-          <details>
-            <summary>展开操作细节</summary>
-            ${m.concrete_how
-              ? `<p><strong>针对当前标的的具体操作：</strong>${escapeHtml(m.concrete_how)}</p>`
-              : `<p><strong>怎么做：</strong>${escapeHtml(m.how || "")}</p>`}
-            <table class="params-table">${(m.concrete_params || m.params || []).map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`).join("")}</table>
-            ${m.pros ? `<p><strong>好处：</strong></p><ul>${m.pros.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : ""}
-            ${m.cons ? `<p><strong>代价：</strong></p><ul>${m.cons.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : ""}
-            ${m.concrete_how ? "" : (m.example ? `<p class="muted" style="font-size:11px;"><strong>通用示例：</strong>${escapeHtml(m.example)}</p>` : "")}
-          </details>
-        </div>
-        <div class="score"><span class="num">${m.score}</span><span>匹配分</span></div>
-      </div>
-    `).join("") || `<div class="muted">未找到匹配策略 — 可能是观点信号过弱。</div>`;
-
     const raw = dec.raw_zh || dec.raw_en || "";
     const transHint = (!dec.raw_zh && dec.raw_en && !isMostlyChinese(dec.raw_en) && this.runState.translation?.available)
       ? `<div class="pending-translation">🔄 中文翻译生成中…</div>` : "";
 
+    // The flat "📚 来自策略库的匹配方案" panel was removed on 2026-05-22 —
+    // all matched strategies are now inlined into each horizon's pane below
+    // (see _renderHorizonPane → stratBlock).
     const planHtml = this._horizonPlanHtml(this.runState.horizonPlan, matched);
 
     card.innerHTML = `
@@ -1130,8 +1102,6 @@ class DecisionWindow {
         <div style="margin-top:14px;">${mdLite(raw)}</div>
       </div>
       ${planHtml}
-      <h3 style="margin-top:24px;">📚 来自策略库的匹配方案（按匹配度排序）</h3>
-      <div class="match-list">${matchHtml}</div>
     `;
     this._wireHorizonTabs();
   }
@@ -1157,6 +1127,30 @@ class DecisionWindow {
     const labels = plan.labels || { short: "短期 (1-2 个月)", mid: "中期 (3-6 个月)", long: "长期 (6 个月以上)" };
     const stratById = {};
     (matched || []).forEach(m => { if (m.id) stratById[m.id] = m; });
+
+    // Bucket every matched strategy into a horizon based on its `.horizon`
+    // field (short/swing/intraday → short, mid/medium → mid, long → long,
+    // anything else → mid). This is the post-2026-05-22 merge: all matched
+    // library entries flow into per-horizon panes instead of a flat bottom
+    // panel. We mark which strategies the deep LLM explicitly picked vs
+    // which are "auto-assigned" by category — both render with full detail.
+    const assignedIds = new Set();
+    HORIZON_ORDER.forEach(k => {
+      const h = plan.horizons[k] || {};
+      (h.strategies || []).forEach(sid => assignedIds.add(sid));
+    });
+    const _bucketFor = (mhz) => {
+      const v = String(mhz || "").toLowerCase();
+      if (v === "short" || v === "swing" || v === "intraday") return "short";
+      if (v === "long") return "long";
+      return "mid";
+    };
+    const autoAssigned = { short: [], mid: [], long: [] };
+    (matched || []).forEach(m => {
+      if (!m.id || assignedIds.has(m.id)) return;
+      autoAssigned[_bucketFor(m.horizon)].push(m.id);
+    });
+
     const cur = plan.current_price;
     const curStr = (cur != null && !isNaN(cur)) ? `当前价 $${Number(cur).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "";
     const provBadge = plan.model ? `<span class="pill" style="font-size:10px;">${escapeHtml(plan.model)}</span>` : "";
@@ -1180,7 +1174,7 @@ class DecisionWindow {
       const h = plan.horizons[k] || {};
       return `
         <div class="horizon-pane ${i === 0 ? "active" : ""}" data-horizon-pane="${k}">
-          ${this._renderHorizonPane(k, h, labels[k] || k, stratById)}
+          ${this._renderHorizonPane(k, h, labels[k] || k, stratById, autoAssigned[k] || [])}
         </div>`;
     }).join("");
 
@@ -1200,7 +1194,7 @@ class DecisionWindow {
   }
 
   /** Render the inside of one horizon pane (target / scenarios / execution / adjustments). */
-  _renderHorizonPane(key, h, label, stratById) {
+  _renderHorizonPane(key, h, label, stratById, autoExtraIds = []) {
     const confEmoji = { high: "🟢 高把握", medium: "🟡 中等把握", low: "🟠 低把握" };
     const ret = h.expected_return_pct;
     const retCls = ret == null ? "" : (ret > 0 ? "up" : ret < 0 ? "down" : "");
@@ -1265,16 +1259,70 @@ class DecisionWindow {
         ${mons ? `<div class="exec-sub"><strong>盯盘信号：</strong><ul>${mons}</ul></div>` : ""}
       </div>`;
 
-    // Strategies referenced from matched library
-    const strats = (h.strategies || []).map(sid => {
+    // Strategy library matches for this horizon — merged from two sources:
+    //   (1) IDs the deep LLM picked for this horizon (h.strategies)
+    //   (2) Any matched library entry whose `.horizon` falls into this bucket
+    //       but which the LLM didn't explicitly pick (the post-2026-05-22 merge
+    //       — the flat "📚 来自策略库的匹配方案" panel at the bottom of the card
+    //       was removed; its content lives here now).
+    // We render each as a full card (description + reasons + concrete how /
+    // params / pros / cons inside <details>) so the user has everything they
+    // need to execute without leaving this horizon's tab.
+    const picked = (h.strategies || []).map(sid => ({ sid, picked: true }));
+    const autoExtras = (autoExtraIds || []).map(sid => ({ sid, picked: false }));
+    const allStrats = [...picked, ...autoExtras];
+    const stratCardsHtml = allStrats.map(({ sid, picked: isPicked }) => {
       const s = stratById[sid];
-      if (!s) return `<span class="strat-chip missing">${escapeHtml(sid)}</span>`;
-      return `<span class="strat-chip" title="${escapeHtml(s.desc || "")}">${escapeHtml(s.name || sid)}</span>`;
+      if (!s) {
+        return `
+          <div class="strat-card-inline missing">
+            <div class="strat-card-head">
+              <span class="strat-card-name">${escapeHtml(sid)}</span>
+              <span class="strat-card-badge">未找到</span>
+            </div>
+          </div>`;
+      }
+      const reasons = (s.reasons || []).map(r => `<span class="reason">${escapeHtml(r)}</span>`).join("");
+      const paramRows = (s.concrete_params || s.params || []).map(([k, v]) =>
+        `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`
+      ).join("");
+      const pros = (s.pros || []).map(x => `<li>${escapeHtml(x)}</li>`).join("");
+      const cons = (s.cons || []).map(x => `<li>${escapeHtml(x)}</li>`).join("");
+      const scoreBadge = s.score != null
+        ? `<span class="strat-card-score" title="strategy-matcher 匹配分">匹配分 ${escapeHtml(String(s.score))}</span>`
+        : "";
+      const sourceBadge = isPicked
+        ? `<span class="strat-card-source picked" title="深思模型为该周期挑选">🎯 深思精选</span>`
+        : `<span class="strat-card-source auto" title="按周期自动归类">📂 自动归类</span>`;
+      return `
+        <div class="strat-card-inline">
+          <div class="strat-card-head">
+            <span class="strat-card-name">${escapeHtml(s.name || sid)}</span>
+            ${s.en ? `<span class="strat-card-en">${escapeHtml(s.en)}</span>` : ""}
+            ${s.cat ? `<span class="tag cat-${escapeHtml(s.cat)}">${escapeHtml(CAT_NAMES[s.cat] || s.cat)}</span>` : ""}
+            ${sourceBadge}
+            ${scoreBadge}
+          </div>
+          ${s.desc ? `<div class="strat-card-desc">${escapeHtml(s.desc)}</div>` : ""}
+          ${reasons ? `<div class="strat-card-reasons">${reasons}</div>` : ""}
+          <details class="strat-card-details">
+            <summary>展开操作细节</summary>
+            ${s.concrete_how
+              ? `<p><strong>针对当前标的的具体操作：</strong>${escapeHtml(s.concrete_how)}</p>`
+              : `<p><strong>怎么做：</strong>${escapeHtml(s.how || "—")}</p>`}
+            ${paramRows ? `<table class="params-table">${paramRows}</table>` : ""}
+            ${pros ? `<p><strong>好处：</strong></p><ul>${pros}</ul>` : ""}
+            ${cons ? `<p><strong>代价：</strong></p><ul>${cons}</ul>` : ""}
+            ${(!s.concrete_how && s.example)
+              ? `<p class="muted" style="font-size:11px;"><strong>通用示例：</strong>${escapeHtml(s.example)}</p>`
+              : ""}
+          </details>
+        </div>`;
     }).join("");
-    const stratBlock = strats ? `
-      <div class="execution-block">
-        <h4>📚 关联策略</h4>
-        <div class="strat-chips">${strats}</div>
+    const stratBlock = stratCardsHtml ? `
+      <div class="execution-block strat-merged-block">
+        <h4>📚 策略库匹配方案（按周期归类）</h4>
+        <div class="strat-card-list">${stratCardsHtml}</div>
       </div>` : "";
 
     // Adjustment rules

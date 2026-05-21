@@ -424,15 +424,24 @@ async def comprehensive_report_generate(
     llm_provider = payload.get("llm_provider") or ""
     deep_model = payload.get("deep_model") or ""
 
-    report = await asyncio.to_thread(
+    result = await asyncio.to_thread(
         _generate, ticker, decisions, quote, llm_provider, deep_model,
     )
-    if report is None:
+    # comprehensive_report.generate now always returns a dict:
+    #   success: {"ok": True, "report": {...}, "provider": ..., "model": ...}
+    #   failure: {"ok": False, "error": "...", "tried": [...]}
+    if not result or not result.get("ok"):
+        err = (result or {}).get("error") or "unknown generation failure"
         return JSONResponse(
-            {"error": "report generation failed — check backend logs or API key configuration"},
+            {"error": err, "tried": (result or {}).get("tried", [])},
             status_code=502,
         )
-    return JSONResponse({"ticker": ticker, "report": report})
+    return JSONResponse({
+        "ticker": ticker,
+        "report": result["report"],
+        "provider": result.get("provider"),
+        "model": result.get("model"),
+    })
 
 
 # ---- reflections / memory log ------------------------------------------
