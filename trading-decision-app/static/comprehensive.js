@@ -110,6 +110,12 @@
 
   // Sidebar collapsed-state preference, keyed by ticker. Stored as a flat
   // map so the user can independently collapse different tickers' sidebars.
+  // Semantics (changed 2026-05-26): when the ticker key is *absent*, the
+  // default is **collapsed (true)** — most users glance at the latest report
+  // and prefer the wider canvas. The key only stores explicit overrides:
+  //   prefs[ticker] === false → user explicitly expanded
+  //   prefs[ticker] === true  → user explicitly collapsed (matches default)
+  //   key missing              → use default (collapsed)
   const _SIDEBAR_KEY = "tda:comp-sidebar-collapsed";
   function _readSidebarPrefs() {
     try { return JSON.parse(localStorage.getItem(_SIDEBAR_KEY) || "{}"); }
@@ -120,7 +126,10 @@
     catch (e) { console.warn("comp-sidebar prefs save failed", e); }
   }
   function _isSidebarCollapsed(ticker) {
-    return !!(_readSidebarPrefs()[(ticker || "").toUpperCase()]);
+    const k = (ticker || "").toUpperCase();
+    const prefs = _readSidebarPrefs();
+    if (Object.prototype.hasOwnProperty.call(prefs, k)) return !!prefs[k];
+    return true;  // default: collapsed
   }
 
   /** How many tickers currently have an in-flight generation. Used by the
@@ -335,7 +344,12 @@
     toggleSidebar(ticker) {
       const tu = (ticker || "").toUpperCase();
       const map = _readSidebarPrefs();
-      map[tu] = !map[tu];
+      // Resolve current state via _isSidebarCollapsed so the absent-key
+      // default (collapsed=true) is respected — without this, the very first
+      // click on a fresh ticker would set true→true (still collapsed) and the
+      // user would think the button is broken.
+      const cur = _isSidebarCollapsed(tu);
+      map[tu] = !cur;
       _writeSidebarPrefs(map);
       this._refreshIfVisible(tu);
     },
@@ -776,11 +790,41 @@
       const order = [
         { key: "short", default_label: "短期 (1-2 个月)", cls: "comp-h-short" },
         { key: "mid",   default_label: "中期 (3-6 个月)", cls: "comp-h-mid" },
-        { key: "long",  default_label: "长期 (6 个月以上)", cls: "comp-h-long" },
+        { key: "long",  default_label: "长期 (6-12 个月)", cls: "comp-h-long" },
       ];
+      // Match-score chip with high/medium/low styling.
+      const matchChip = (m) => {
+        const k = (m || "").toLowerCase();
+        const label = { high: "匹配·高", medium: "匹配·中", low: "匹配·低" }[k] || (m ? "匹配·" + m : "");
+        if (!label) return "";
+        return `<span class="comp-match-chip comp-match-${esc(k || "medium")}">${esc(label)}</span>`;
+      };
+      // Normalise strategies field with backward compatibility:
+      //   1. New schema: hz.strategies = [{name, match_score, thesis, execution}, …]
+      //   2. Legacy single-string `strategy` field — wrap into a one-item array.
+      //   3. Filter out any string sentinel like "至少 3 条；按匹配度排序"
+      //      that the model might emit verbatim.
+      const _normStrategies = (hz) => {
+        const raw = Array.isArray(hz.strategies) ? hz.strategies : [];
+        const cleaned = raw.filter(s => s && typeof s === "object" && (s.name || s.execution || s.thesis));
+        if (cleaned.length) return cleaned;
+        if (hz.strategy) return [{ execution: hz.strategy }];
+        return [];
+      };
       const cards = order.map(o => {
         const hz = h[o.key] || {};
         const risks = (hz.key_risks || []).map(r => `<li>${esc(r)}</li>`).join("");
+        const strategies = _normStrategies(hz);
+        const stratItems = strategies.map((s, i) => `
+          <li class="comp-h-strat-item">
+            <div class="comp-h-strat-head">
+              <span class="comp-h-strat-rank">#${i + 1}</span>
+              ${s.name ? `<span class="comp-h-strat-name">${esc(s.name)}</span>` : ""}
+              ${s.match_score ? matchChip(s.match_score) : ""}
+            </div>
+            ${s.thesis ? `<p class="comp-h-strat-thesis">${esc(s.thesis)}</p>` : ""}
+            ${s.execution ? `<p class="comp-h-strat-exec"><span class="comp-h-strat-exec-label">执行：</span>${esc(s.execution)}</p>` : ""}
+          </li>`).join("");
         return `
           <article class="comp-h-card ${o.cls}">
             <header class="comp-h-head">
@@ -794,10 +838,10 @@
                 <span class="comp-h-target-value">${esc(hz.target_price)}</span>
               </div>` : ""}
             ${hz.summary ? `<p class="comp-h-summary">${esc(hz.summary)}</p>` : ""}
-            ${hz.strategy ? `
-              <div class="comp-h-strategy">
-                <div class="comp-h-strategy-label">⚙ 执行策略 + 策略库匹配</div>
-                <p>${esc(hz.strategy)}</p>
+            ${stratItems ? `
+              <div class="comp-h-strategies">
+                <div class="comp-h-strategies-label">⚙ 候选策略（按匹配度排序）</div>
+                <ol class="comp-h-strat-list">${stratItems}</ol>
               </div>` : ""}
             ${risks ? `
               <div class="comp-h-risks">
