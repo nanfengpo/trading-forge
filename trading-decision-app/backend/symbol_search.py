@@ -9,16 +9,19 @@ the user disambiguate when the same letters mean different things:
     BTC      → Grayscale Bitcoin Mini Trust ETF (NYSE Arca)
     BTC-USD  → Bitcoin spot pair on Yahoo Finance
 
-This module merges results from up to three sources (in order):
+This module merges results from up to four sources (in order):
 
-  1. **Finnhub `/search`** — when ``FINNHUB_API_KEY`` is set. Best for US
-     equities and ETFs; returns symbol + description + type + primary
-     exchange.
-  2. **Yahoo Finance `/v1/finance/search`** — no key required. Best for
-     crypto pairs (BTC-USD), HK (.HK), CN A-shares (.SS / .SZ), futures.
-  3. **Curated fallback table** — covers the most common ambiguous
-     tickers (BTC, ETH, etc.) so the feature still works if both
-     external endpoints are blocked / rate-limited.
+  1. **Curated table** — common ambiguous tickers (BTC, ETH, …); always
+     surfaced first so the explicit disambiguation appears at the top.
+  2. **CoinGecko `/search`** — no key, covers EVERY crypto token
+     including brand-new launches (Hyperliquid HYPE, etc.) that Yahoo
+     hasn't indexed yet. We normalise to Yahoo-style ``XXX-USD``.
+  3. **Finnhub `/search`** — when ``FINNHUB_API_KEY`` is set. Best for
+     US equities and ETFs; returns symbol + description + type +
+     primary exchange.
+  4. **Yahoo Finance `/v1/finance/search`** — no key. Best for HK
+     (.HK), CN A-shares (.SS / .SZ), futures, established crypto
+     pairs.
 
 We normalise everything to a flat ``{symbol, name, exchange, quote_type,
 market, currency}`` shape so the frontend renders one consistent list.
@@ -160,7 +163,89 @@ def _fetch_finnhub(query: str, limit: int) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Source 2: Yahoo Finance /v1/finance/search
+# Source: CoinGecko /api/v3/search
+#
+# Free, no key required, and the most comprehensive crypto database for
+# newer tokens. Covers things Yahoo/Finnhub don't index — Hyperliquid
+# (HYPE), Bonk (BONK), launched-yesterday meme coins, etc.
+#
+# We normalise CoinGecko's plain ``HYPE`` symbol into the Yahoo-style
+# ``HYPE-USD`` canonical form so the rest of the app (watchlist storage,
+# quotes lookup) treats it uniformly with other crypto pairs.
+# ---------------------------------------------------------------------------
+
+# Suffix list per CoinGecko docs: ``-USD`` is the de-facto canonical form
+# the rest of the app already uses (BTC-USD, ETH-USD, …). We keep that.
+_COINGECKO_SEARCH = "https://api.coingecko.com/api/v3/search"
+
+
+def _fetch_coingecko(query: str, limit: int) -> List[Dict[str, Any]]:
+    # Skip CoinGecko for queries that are obviously not crypto (too long,
+    # contain a dot, etc.) to avoid noise + needless HTTP calls.
+    q = (query or "").strip()
+    if not q or len(q) > 32 or "." in q or "=" in q:
+        return []
+
+    url = f"{_COINGECKO_SEARCH}?{urllib.parse.urlencode({'query': q})}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": _YAHOO_UA,
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        logger.debug("symbol-search coingecko %r: %s", query, e)
+        return []
+
+    # Relevance filter:
+    # Without it, every "NVDA" search drowns in CoinGecko's NVDAON /
+    # NVDAX / NVDAR / Wrapped-bNVDA junk (the tokenized-stock copycats),
+    # and "TSLA" picks up "TSLA6900" — a literal-symbol-match meme coin
+    # ranked 8502 by market cap.
+    #
+    # Rule: require **market_cap_rank ≤ 500** for any CoinGecko row to
+    # pass. Even with an exact-symbol match. Top-500 covers every
+    # legitimately tradeable token (Hyperliquid is #11, Bonk #99, etc.)
+    # while filtering out scam / meme / dead-project copycats.
+    q_u = query.strip().upper()
+    out: List[Dict[str, Any]] = []
+    seen_syms: set = set()
+    for c in (data.get("coins") or []):
+        sym_raw = (c.get("symbol") or "").upper().strip()
+        if not sym_raw or sym_raw in seen_syms:
+            continue
+        rank = c.get("market_cap_rank") if isinstance(c.get("market_cap_rank"), int) else 9999
+        if rank > 500:
+            continue
+        # Bonus: prioritise exact-symbol matches by short-circuiting the
+        # loop so they always end up at the head of the returned list
+        # (CoinGecko occasionally orders by relevance, not market cap,
+        # which would otherwise bury HYPE under another HYPE-prefixed
+        # but lower-ranked coin).
+        seen_syms.add(sym_raw)
+        # Yahoo-style canonical form so downstream code (which already
+        # assumes BTC-USD etc.) works without changes.
+        canonical = f"{sym_raw}-USD"
+        name = c.get("name") or sym_raw
+        # Annotate top-1000 coins with their rank so the dropdown can
+        # show "#11" alongside Hyperliquid (helps the user spot the
+        # canonical token vs a copycat with the same symbol).
+        if 1 <= rank <= 999:
+            name = f"{name} · #{rank}"
+        out.append(_row(
+            symbol=canonical,
+            name=name,
+            exchange="CoinGecko",
+            quote_type="CRYPTOCURRENCY",
+        ))
+        if len(out) >= limit:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Source: Yahoo Finance /v1/finance/search
 # ---------------------------------------------------------------------------
 
 _YAHOO_SEARCH = "https://query2.finance.yahoo.com/v1/finance/search"
@@ -255,18 +340,46 @@ def _fetch_curated(query: str) -> List[Dict[str, Any]]:
 # Merge + dedupe
 # ---------------------------------------------------------------------------
 
-def _merge(*lists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Combine multiple source lists, dedupe by symbol, preserve order."""
+def _relevance_score(item: Dict[str, Any], query_upper: str) -> int:
+    """Score how closely an item matches the user's typed query.
+
+    Higher = better. Used to stable-sort the merged results so that
+    real equities (Finnhub NVDA → "NVDA") outrank tokenized copycats
+    (CoinGecko NVDAON → "NVDA-Ondo-Tokenized") even though both are
+    valid hits.
+    """
+    sym = (item.get("symbol") or "").upper()
+    q = query_upper
+    if sym == q:                                   return 100   # NVDA == NVDA
+    if sym == f"{q}-USD":                          return 95    # HYPE → HYPE-USD
+    if sym == f"{q}USD" or sym == f"{q}-USDT":     return 90
+    if "." in sym and sym.split(".")[0] == q:      return 85    # 0700.HK exact base
+    if "-" in sym and sym.split("-")[0] == q:      return 80    # SOL-USD, BTC-USD, …
+    if sym.startswith(q + "."):                    return 70    # NVDA.TO
+    if sym.startswith(q):                          return 60
+    if q in sym:                                   return 40
+    return 20
+
+
+def _merge(query_upper: str, *lists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Combine multiple source lists, dedupe by symbol, then stable-sort
+    by relevance to ``query_upper`` so the most-relevant hit always wins
+    the top slot."""
     seen: set = set()
-    out: List[Dict[str, Any]] = []
+    pool: List[tuple] = []  # (score, insertion_order, item)
+    order = 0
     for lst in lists:
         for it in lst:
             sym = (it.get("symbol") or "").upper()
             if not sym or sym in seen:
                 continue
             seen.add(sym)
-            out.append(it)
-    return out
+            pool.append((_relevance_score(it, query_upper), order, it))
+            order += 1
+    # Sort: highest score first, ties broken by original insertion order
+    # (= preserves the curated → coingecko → finnhub → yahoo priority).
+    pool.sort(key=lambda t: (-t[0], t[1]))
+    return [t[2] for t in pool]
 
 
 # ---------------------------------------------------------------------------
@@ -289,14 +402,27 @@ def search(query: str, limit: int = 8) -> List[Dict[str, Any]]:
     if cached is not None:
         return cached
 
-    finnhub = _fetch_finnhub(q, limit)
-    yahoo   = _fetch_yahoo(q, limit)
-    curated = _fetch_curated(q)
+    curated   = _fetch_curated(q)
+    coingecko = _fetch_coingecko(q, limit)
+    finnhub   = _fetch_finnhub(q, limit)
+    yahoo     = _fetch_yahoo(q, limit)
 
-    # Curated rows for common ambiguous tickers are surfaced FIRST so the
-    # user always sees the explicit choice (e.g. BTC-USD crypto vs BTC ETF)
-    # at the top of the dropdown.
-    merged = _merge(curated, finnhub, yahoo)[:limit]
+    # Two-tier merge:
+    #   1. Curated rows ALWAYS come first in their hand-defined order —
+    #      that's the whole point of the curated table (BTC-USD before
+    #      BTC ETF is an editorial choice we don't want a relevance
+    #      heuristic overriding).
+    #   2. Everything else (CoinGecko + Finnhub + Yahoo) is deduped and
+    #      relevance-sorted so the most-on-target symbol wins. This is
+    #      how Finnhub's real NVDA wins over CoinGecko's NVDAON
+    #      tokenized-stock copycat.
+    curated_keys = {(r.get("symbol") or "").upper() for r in curated}
+    non_curated = [
+        r for r in (coingecko + finnhub + yahoo)
+        if (r.get("symbol") or "").upper() not in curated_keys
+    ]
+    sorted_rest = _merge(q.upper(), non_curated)
+    merged = (curated + sorted_rest)[:limit]
 
     if not merged:
         merged = [_row(q.upper(), "(无在线匹配 — 直接添加)", "", "")]
