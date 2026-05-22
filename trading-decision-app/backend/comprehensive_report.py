@@ -299,28 +299,39 @@ def _call_openai_compat(provider: str, model: str, payload: Dict[str, Any]) -> s
 def _call_anthropic(model: str, payload: Dict[str, Any]) -> str:
     """Send the prompt via the Anthropic Messages API (Claude).
 
-    Note (2026-05-22): Opus 4.7 and newer Claude models **deprecated the
-    `temperature` parameter** — passing it returns HTTP 400. We previously
-    sent `temperature=0.4` unconditionally, which caused the Anthropic call
-    to fail and the fallback chain to silently land on DeepSeek. We now only
-    include `temperature` for older models that still accept it.
+    Notes (2026-05-22):
+    -- Opus 4.7 and newer Claude models **deprecated the `temperature`
+       parameter** — passing it returns HTTP 400. We previously sent
+       `temperature=0.4` unconditionally, which caused the Anthropic call
+       to fail and the fallback chain to silently land on DeepSeek. We now
+       only include `temperature` for older models that still accept it.
+    -- The new prompt requires ≥3 strategies per horizon (× 3 horizons +
+       all 4 dimensions + scenarios + meta), so Opus 4.7's JSON output
+       routinely runs **7K–10K tokens**. With the old `max_tokens=5500`,
+       the response truncated mid-string and JSON.parse threw, dropping
+       us back to DeepSeek. Bumped to **16000** to give comfortable
+       headroom (Opus 4.7 caps at 64K).
+    -- Long Opus 4.7 syntheses can also exceed the old 120 s wall-clock
+       and trigger "Request timed out or interrupted" → same fallback.
+       Switched to the **streaming API** as Anthropic recommends for any
+       request longer than ~60 s (see
+       https://docs.anthropic.com/en/api/errors#long-requests). The client
+       timeout is bumped to **600 s** as a hard ceiling.
     """
     try:
         import anthropic  # type: ignore
     except ImportError as e:
         raise RuntimeError("anthropic SDK not installed") from e
     key = os.environ[_ANTHROPIC_CFG["env"]]
-    client = anthropic.Anthropic(api_key=key, timeout=120)
+    client = anthropic.Anthropic(api_key=key, timeout=600)
 
-    # Only legacy / non-Opus-4.7 Claude models still accept temperature.
-    # Anything starting with "claude-opus-4" or "claude-sonnet-4-7" /
-    # "claude-haiku-4-5"+ rejects it.
     kwargs: Dict[str, Any] = {
         "model": model,
-        "max_tokens": 5500,
+        "max_tokens": 16000,
         "system": _SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
     }
+    # Only legacy / non-Opus-4.7 Claude models still accept `temperature`.
     m = (model or "").lower()
     _temperature_supported = not (
         m.startswith("claude-opus-4-7")
@@ -335,12 +346,14 @@ def _call_anthropic(model: str, payload: Dict[str, Any]) -> str:
     if _temperature_supported:
         kwargs["temperature"] = 0.4
 
-    resp = client.messages.create(**kwargs)
+    # Streaming avoids the network-layer timeout that bit non-streamed
+    # long requests. We accumulate text in-process and return the full
+    # concatenation so the caller's contract is unchanged.
     parts: List[str] = []
-    for blk in resp.content or []:
-        text = getattr(blk, "text", None)
-        if text:
-            parts.append(text)
+    with client.messages.stream(**kwargs) as stream:
+        for chunk in stream.text_stream:
+            if chunk:
+                parts.append(chunk)
     return "".join(parts).strip()
 
 
