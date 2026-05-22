@@ -340,18 +340,38 @@
 
     /** Toggle the history-sidebar collapsed state. Persists in localStorage so
      *  the user's preference survives reloads. Per-ticker so different assets
-     *  can have different collapse states. */
+     *  can have different collapse states.
+     *
+     *  IMPORTANT (2026-05-22 flicker fix): we used to call
+     *  `_refreshIfVisible(tu)` here, which triggered a full re-render of the
+     *  watchlist main panel → comp-report DOM was completely rebuilt every
+     *  click → visible content-flash. Now we DOM-surgically toggle the
+     *  `.collapsed` class on the existing grid/sidebar/toggle, so the only
+     *  thing that moves is the CSS-transitioned grid column width. No HTML
+     *  is rewritten, scroll position is preserved, scrollbars don't reflow.
+     */
     toggleSidebar(ticker) {
       const tu = (ticker || "").toUpperCase();
       const map = _readSidebarPrefs();
-      // Resolve current state via _isSidebarCollapsed so the absent-key
-      // default (collapsed=true) is respected — without this, the very first
-      // click on a fresh ticker would set true→true (still collapsed) and the
-      // user would think the button is broken.
       const cur = _isSidebarCollapsed(tu);
-      map[tu] = !cur;
+      const next = !cur;
+      map[tu] = next;
       _writeSidebarPrefs(map);
-      this._refreshIfVisible(tu);
+
+      // Apply purely in-DOM. We target ANY mounted comp-block for this
+      // ticker (the user might have it open in the watchlist main pane).
+      document.querySelectorAll(`.wl-comp-mount[data-ticker="${tu}"] .comp-block`).forEach(block => {
+        const grid = block.querySelector(".comp-body-grid");
+        if (!grid) return;
+        grid.classList.toggle("collapsed", next);
+        const aside = grid.querySelector(".comp-sidebar");
+        if (aside) aside.classList.toggle("collapsed", next);
+        // Toggle button glyph + tooltip flip
+        grid.querySelectorAll("[data-comp-sidebar-toggle]").forEach(btn => {
+          btn.title = next ? "展开历史版本" : "折叠侧边栏";
+          btn.setAttribute("aria-expanded", String(!next));
+        });
+      });
     },
 
     async togglePinned(ticker, versionId) {
@@ -620,10 +640,18 @@
         </div>`;
     },
 
+    /** Unified sidebar markup (2026-05-22 flicker fix).
+     *
+     *  We always render the SAME DOM tree regardless of collapsed state. The
+     *  parent `.comp-body-grid.collapsed` class flips CSS rules to hide the
+     *  body and tighten the gutter — so toggling state is a single
+     *  classList.toggle() with no innerHTML rewrites. The toggle button is
+     *  always present (top of the aside) so the user can collapse/expand
+     *  without ever leaving the report.
+     */
     _sidebarHTML(ticker, history, selectedId, collapsed = false) {
       const items = history.map(h => {
         const sel = h.id === selectedId ? " selected" : "";
-        const pin = h.is_pinned ? "★" : "";
         const statIcon =
           h.status === "ready" ? "✓" :
           h.status === "generating" ? "⚡" :
@@ -638,7 +666,7 @@
             <div class="comp-side-row">
               <span class="comp-side-stat ${statCls}">${statIcon}</span>
               <span class="comp-side-time">${esc(fmtTimeShort(h.generated_at))}</span>
-              ${pin ? `<span class="comp-side-pin" title="已收藏">★</span>` : ""}
+              ${h.is_pinned ? `<span class="comp-side-pin" title="已收藏">★</span>` : ""}
             </div>
             <div class="comp-side-meta">${h.decisions_count || 0} 次决策${h.model ? " · " + esc(_prettyModel(h.model)) : ""}</div>
             ${headline ? `<div class="comp-side-headline">${esc(headline.slice(0, 56))}${headline.length > 56 ? "…" : ""}</div>` : ""}
@@ -648,22 +676,23 @@
             </div>
           </li>`;
       }).join("");
-      // Collapsed state shows only the toggle bar (no body); the toggle button
-      // is always rendered so the user can re-expand without leaving the page.
-      if (collapsed) {
-        return `
-          <aside class="comp-sidebar collapsed" title="展开历史版本">
-            <button class="comp-sidebar-toggle collapsed" data-comp-sidebar-toggle="${esc(ticker)}" title="展开历史版本">📜<span class="comp-sidebar-toggle-count">${history.length}</span></button>
-          </aside>`;
-      }
+      const toggleTitle = collapsed ? "展开历史版本" : "折叠侧边栏";
+      const ariaExpanded = collapsed ? "false" : "true";
       return `
-        <aside class="comp-sidebar">
-          <div class="comp-sidebar-head">
-            <span>📜 历史版本</span>
-            <span class="comp-sidebar-count">${history.length}</span>
-            <button class="comp-sidebar-toggle" data-comp-sidebar-toggle="${esc(ticker)}" title="折叠侧边栏">◀</button>
+        <aside class="comp-sidebar${collapsed ? " collapsed" : ""}">
+          <button class="comp-sidebar-toggle"
+                  data-comp-sidebar-toggle="${esc(ticker)}"
+                  title="${toggleTitle}" aria-expanded="${ariaExpanded}">
+            <span class="comp-sidebar-toggle-icon" aria-hidden="true"></span>
+            <span class="comp-sidebar-toggle-count" aria-hidden="true">${history.length}</span>
+          </button>
+          <div class="comp-sidebar-body">
+            <div class="comp-sidebar-head">
+              <span class="comp-sidebar-head-label">📜 历史版本</span>
+              <span class="comp-sidebar-count">${history.length}</span>
+            </div>
+            <ul class="comp-sidebar-list">${items}</ul>
           </div>
-          <ul class="comp-sidebar-list">${items}</ul>
         </aside>`;
     },
 

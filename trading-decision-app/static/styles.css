@@ -3288,39 +3288,103 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 .strat-card-details ul { margin: 4px 0 8px 18px; }
 
 /* =========================================================================
-   Comp report — history sidebar (2026-05-22 rev 3)
+   Comp report — history sidebar (2026-05-22 rev 4 — unified DOM, smooth collapse)
+   The sidebar markup is the same regardless of collapsed state. We toggle
+   `.collapsed` on the grid + aside to flip CSS rules, animating
+   grid-template-columns + opacity for a flicker-free transition.
    ========================================================================= */
 .comp-body-grid {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 256px 1fr;
   gap: 18px;
   margin-top: 4px;
+  transition: grid-template-columns 240ms cubic-bezier(.4,.0,.2,1);
 }
+.comp-body-grid.collapsed { grid-template-columns: 40px 1fr; }
 .comp-main { min-width: 0; }   /* prevents grid blowout from wide content */
 
 .comp-sidebar {
-  background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px;
-  padding: 10px 8px; max-height: 720px; overflow-y: auto;
-  align-self: start; position: sticky; top: 12px;
+  position: sticky; top: 12px; align-self: start;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  max-height: calc(100vh - 80px);
+  overflow: hidden;                       /* clip the collapsing body */
+  display: flex; flex-direction: column;
+  gap: 6px;
+  transition: padding 240ms cubic-bezier(.4,.0,.2,1);
+}
+.comp-sidebar.collapsed { padding: 8px 4px; }
+
+/* --- Toggle button: always visible, becomes the only thing when collapsed --- */
+.comp-sidebar-toggle {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; padding: 6px 8px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-muted); font-size: 12px; line-height: 1; cursor: pointer;
+  transition: background 0.12s, color 0.12s, padding 240ms cubic-bezier(.4,.0,.2,1);
+}
+.comp-sidebar-toggle:hover { background: var(--bg-soft); color: var(--text); }
+.comp-sidebar-toggle-icon {
+  display: inline-block; width: 8px; height: 8px;
+  border-left: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);              /* ◀ pointing left = "fold left" */
+  transition: transform 240ms cubic-bezier(.4,.0,.2,1);
+}
+.comp-sidebar.collapsed .comp-sidebar-toggle {
+  flex-direction: column; padding: 8px 4px; gap: 4px;
+}
+.comp-sidebar.collapsed .comp-sidebar-toggle-icon {
+  transform: rotate(-135deg);            /* ▶ pointing right = "unfold" */
+}
+.comp-sidebar-toggle-count {
+  font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  background: var(--bg-soft); color: var(--text);
+  border: 1px solid var(--border); font-weight: 700;
+  min-width: 16px; text-align: center;
+  font-feature-settings: "tnum" 1;
+}
+
+/* --- Sidebar body: head + scrollable list --- */
+.comp-sidebar-body {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 6px;
+  opacity: 1; transform: translateX(0);
+  transition: opacity 200ms ease 60ms, transform 240ms cubic-bezier(.4,.0,.2,1);
+}
+.comp-sidebar.collapsed .comp-sidebar-body {
+  opacity: 0; transform: translateX(-6px);
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 200ms cubic-bezier(.4,.0,.2,1);
 }
 .comp-sidebar-head {
   font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
-  padding: 4px 8px 8px; border-bottom: 1px solid var(--border);
+  padding: 4px 6px 8px; border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 6px; color: var(--text);
 }
+.comp-sidebar-head-label { display: inline-flex; align-items: center; gap: 4px; }
 .comp-sidebar-count {
-  font-size: 10px; padding: 2px 6px; border-radius: 999px;
+  font-size: 10px; padding: 2px 7px; border-radius: 999px;
   background: var(--bg); color: var(--text-muted); border: 1px solid var(--border);
   font-weight: 600; margin-left: auto;
+  font-feature-settings: "tnum" 1;
 }
 .comp-sidebar-list {
-  margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px;
-  margin-top: 8px;
+  margin: 0; padding: 0 2px 2px; list-style: none;
+  display: flex; flex-direction: column; gap: 4px;
+  overflow-y: auto; flex: 1 1 auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
+.comp-sidebar-list::-webkit-scrollbar { width: 6px; }
+.comp-sidebar-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
 .comp-side-item {
-  position: relative; cursor: pointer; padding: 8px 10px 6px;
-  border-radius: 6px; border: 1px solid transparent;
-  transition: background 0.12s, border-color 0.12s;
+  position: relative; cursor: pointer; padding: 8px 10px 7px;
+  border-radius: 7px; border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 .comp-side-item:hover { background: var(--bg); border-color: var(--border); }
 .comp-side-item.selected {
@@ -3337,12 +3401,18 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 .comp-side-stat.comp-side-stat-err { color: #c0392b; }
 @keyframes comp-side-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 
-.comp-side-time { font-weight: 600; font-size: 11.5px; color: var(--text); }
+.comp-side-time {
+  font-weight: 600; font-size: 11.5px; color: var(--text);
+  font-feature-settings: "tnum" 1;
+}
 .comp-side-pin { color: #b89030; font-weight: 700; margin-left: auto; }
-.comp-side-meta { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+.comp-side-meta {
+  font-size: 10.5px; color: var(--text-muted); margin-top: 3px;
+  font-feature-settings: "tnum" 1;
+}
 .comp-side-headline {
-  font-size: 11px; color: var(--text-soft); line-height: 1.4;
-  margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--border);
+  font-size: 11px; color: var(--text-soft); line-height: 1.45;
+  margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--border);
 }
 .comp-side-actions {
   position: absolute; top: 4px; right: 4px; display: none; gap: 2px;
@@ -3354,14 +3424,16 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 .comp-side-pin-btn, .comp-side-del-btn {
   background: transparent; border: none; cursor: pointer;
   font-size: 13px; padding: 2px 5px; border-radius: 3px;
-  color: var(--text-muted);
+  color: var(--text-muted); line-height: 1;
 }
 .comp-side-pin-btn:hover, .comp-side-del-btn:hover { background: var(--bg-soft); color: var(--text); }
 .comp-side-pin-btn.on { color: #b89030; }
 
 @media (max-width: 900px) {
-  .comp-body-grid { grid-template-columns: 1fr; }
+  .comp-body-grid { grid-template-columns: 1fr; transition: none; }
+  .comp-body-grid.collapsed { grid-template-columns: 1fr; }
   .comp-sidebar { position: relative; top: auto; max-height: 280px; }
+  .comp-sidebar.collapsed { max-height: 44px; }
 }
 
 /* =========================================================================
@@ -3411,40 +3483,153 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   font-feature-settings: "tnum" 1;
 }
 
+/* (The legacy "collapsible history sidebar" block was merged into the
+   unified rev 4 section above on 2026-05-22. Removed to prevent override
+   conflicts.) */
+
 /* =========================================================================
-   Comp report — collapsible history sidebar
+   Comp report — layout polish (2026-05-22 rev 5)
+   Goals: more consistent rhythm, balanced headline banner, equal-height
+   horizon cards with cleaner strategy stack, tighter section spacing.
    ========================================================================= */
-.comp-body-grid.collapsed {
-  grid-template-columns: 36px 1fr;
+
+/* Tighter, more breathing room — but consistent. */
+.comp-block {
+  padding: 20px 22px 18px;
+  border-radius: 14px;
 }
-.comp-sidebar-head {
-  display: flex; align-items: center; gap: 8px;
+.comp-section { margin: 22px 0 0; }
+.comp-section + .comp-section { margin-top: 22px; }
+.comp-section-title {
+  margin: 0 0 10px; font-size: 13.5px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: none;
+  color: var(--text-muted);
 }
-.comp-sidebar-head .comp-sidebar-count { margin-left: auto; }
-.comp-sidebar-toggle {
-  background: transparent; border: 1px solid var(--border); cursor: pointer;
-  color: var(--text-muted); font-size: 11px;
-  padding: 2px 6px; border-radius: 4px; line-height: 1;
-  transition: background 0.12s, color 0.12s;
+.comp-section-title::before {
+  content: ""; display: inline-block; width: 3px; height: 14px;
+  background: var(--accent); border-radius: 2px; margin-right: 8px;
+  vertical-align: -2px;
 }
-.comp-sidebar-toggle:hover { background: var(--bg); color: var(--text); }
-.comp-sidebar.collapsed {
-  padding: 4px 2px; max-height: 720px;
-  display: flex; align-items: flex-start; justify-content: center;
+.comp-section-title > *:first-child { margin-left: 0; }
+
+/* Headline banner — center conviction chip vertically, lift typography. */
+.comp-headline-banner {
+  align-items: center;
+  padding: 16px 18px;
+  border-radius: 12px;
+  margin-bottom: 4px;
+}
+.comp-headline-text {
+  font-size: 18px; font-weight: 600; line-height: 1.4;
+  letter-spacing: 0.005em;
+}
+.comp-headline-label { color: var(--accent); opacity: 0.85; }
+.comp-headline-side { align-self: center; }
+
+/* Intro block — bring news + narrative closer to the name block. */
+.comp-intro-name { font-size: 17px; letter-spacing: 0.01em; }
+.comp-intro-what { font-size: 13.5px; line-height: 1.65; margin: 4px 0 12px; }
+.comp-intro-news, .comp-intro-narrative {
+  border-radius: 0 10px 10px 0; padding: 11px 14px;
+}
+
+/* Dimensions: 4 cards, slightly taller breathing room, consistent baseline. */
+.comp-dim-grid { gap: 14px; }
+.comp-dim-card { padding: 14px 14px 12px; border-radius: 11px; }
+.comp-dim-summary { line-height: 1.6; }
+.comp-dim-list { line-height: 1.65; }
+
+/* Scenarios: gentler gradient, breathing room, even heights. */
+.comp-scen-grid { gap: 14px; align-items: stretch; }
+.comp-scen-card { padding: 14px 16px; border-radius: 11px; display: flex; flex-direction: column; }
+
+/* Horizons (≥3 strategies): equal-height cards, tighter rhythm, indent strat list. */
+.comp-h-grid {
+  gap: 14px;
+  align-items: stretch;          /* equal-height cards */
+}
+.comp-h-card {
+  padding: 16px 16px 14px;
+  border-radius: 12px;
+  display: flex; flex-direction: column;
+  gap: 6px;
+}
+.comp-h-head { margin-bottom: 4px; gap: 8px; }
+.comp-h-label { font-size: 13.5px; letter-spacing: 0.01em; }
+.comp-h-target {
+  padding: 10px 12px; border-radius: 9px;
+  margin: 4px 0 8px;
+}
+.comp-h-target-value { font-size: 17px; }
+.comp-h-summary { line-height: 1.6; margin: 0 0 8px; }
+
+/* Strategy list — make each card breathe consistently. */
+.comp-h-strategies, .comp-h-risks {
+  margin-top: 10px; padding-top: 10px;
+}
+.comp-h-strategies-label, .comp-h-risks-label {
+  margin-bottom: 8px; letter-spacing: 0.08em; font-size: 10.5px;
+}
+.comp-h-strat-list { gap: 8px; }
+.comp-h-strat-item {
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--bg);                     /* lift above card bg */
+  box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+}
+.comp-h-strat-item + .comp-h-strat-item { margin-top: 0; }
+.comp-h-strat-head { margin-bottom: 6px; gap: 7px; }
+.comp-h-strat-rank {
+  font-size: 10.5px;
   background: var(--bg-soft);
+  border-color: transparent;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: 0.02em;
 }
-.comp-sidebar-toggle.collapsed {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 8px 4px;
-  width: 28px; height: auto;
-  font-size: 14px; line-height: 1.1;
-  border: 1px solid var(--border); border-radius: 6px;
+.comp-h-strat-name {
+  font-size: 12.5px;
+  letter-spacing: 0.005em;
 }
-.comp-sidebar-toggle-count {
-  font-size: 10px; padding: 1px 4px; border-radius: 6px;
-  background: var(--bg); color: var(--text);
-  border: 1px solid var(--border); font-weight: 700;
-  min-width: 16px; text-align: center;
+.comp-h-strat-thesis {
+  font-size: 11.5px; line-height: 1.6;
+  margin: 5px 0 6px;
+}
+.comp-h-strat-exec {
+  font-size: 12px; line-height: 1.6;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  margin: 6px 0 0;
+}
+.comp-h-strat-exec-label {
+  display: inline-block;
+  padding: 0 6px; margin-right: 4px;
+  background: rgba(124,92,255,0.12);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+.comp-h-risks { border-top-style: solid; border-top-color: rgba(192,57,43,0.18); }
+.comp-h-risks ul { padding-left: 20px; }
+.comp-h-risks li { line-height: 1.65; }
+
+/* Footer — quieter, right-aligned. */
+.comp-footer {
+  margin-top: 22px; padding-top: 14px;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+}
+
+/* Honor "reduce motion" — drop the sidebar collapse animation entirely. */
+@media (prefers-reduced-motion: reduce) {
+  .comp-body-grid,
+  .comp-sidebar,
+  .comp-sidebar-toggle,
+  .comp-sidebar-toggle-icon,
+  .comp-sidebar-body {
+    transition: none !important;
+  }
 }
 
 
