@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TradingForge · 智策 · 多智能体投研工作台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/styles.css?v=20260526e">
+<link rel="stylesheet" href="/styles.css?v=20260527a">
 </head>
 <body>
 
@@ -314,11 +314,23 @@
          autocomplete=new-password + neutral names + no submit input also
          help suppress the heuristic. -->
     <div class="watchlist-add-form" id="watchlist-add-form" style="display:none;" role="group" aria-label="添加自选">
-      <input type="text" id="watchlist-add-ticker"
-             name="wl-symbol-input" autocomplete="new-password"
-             autocapitalize="off" spellcheck="false"
-             data-1p-ignore data-lpignore="true"
-             placeholder="代码：NVDA / BTC-USD / 0700.HK / 600519.SS / GC=F …" />
+      <!-- Ticker input + live autocomplete dropdown.
+           When the user types, /api/symbol-search returns candidate
+           symbols with name + exchange + market so duplicates like
+           BTC (Grayscale ETF) vs BTC-USD (Bitcoin spot) can be picked
+           explicitly. Selection writes a canonical symbol into the
+           hidden state used by _submitAdd. -->
+      <div class="wl-add-symbol-wrap" id="watchlist-add-symbol-wrap">
+        <input type="text" id="watchlist-add-ticker"
+               name="wl-symbol-input" autocomplete="off"
+               autocapitalize="off" spellcheck="false"
+               role="combobox" aria-autocomplete="list"
+               aria-controls="watchlist-add-suggest" aria-expanded="false"
+               data-1p-ignore data-lpignore="true"
+               placeholder="代码：NVDA / BTC / 0700.HK / 600519.SS / GC=F …" />
+        <div class="wl-add-suggest" id="watchlist-add-suggest" role="listbox" hidden></div>
+        <div class="wl-add-selected" id="watchlist-add-selected" hidden></div>
+      </div>
       <input type="text" id="watchlist-add-name"
              name="wl-display-input" autocomplete="new-password"
              autocapitalize="off" spellcheck="false"
@@ -1075,10 +1087,10 @@
   }
 </script>
 <script src="/auth.js"></script>
-<script src="/comprehensive.js?v=20260526e"></script>
+<script src="/comprehensive.js?v=20260527a"></script>
 <script src="/strategies.js"></script>
-<script src="/app.js?v=20260526e"></script>
+<script src="/app.js?v=20260527a"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/fundamentals.js?v=20260526e"></script>
+<script src="/fundamentals.js?v=20260527a"></script>
 </body>
 </html>

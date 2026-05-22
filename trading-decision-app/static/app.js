@@ -3155,9 +3155,7 @@ const Watchlist = {
     document.getElementById("watchlist-add-btn").addEventListener("click", () => this._toggleAddForm(true));
     document.getElementById("watchlist-add-cancel").addEventListener("click", () => this._toggleAddForm(false));
     document.getElementById("watchlist-add-submit").addEventListener("click", () => this._submitAdd());
-    document.getElementById("watchlist-add-ticker").addEventListener("keydown", e => {
-      if (e.key === "Enter") this._submitAdd();
-    });
+    this._wireSymbolSearch();
     document.getElementById("watchlist-import-history").addEventListener("click", () => this.importFromHistory());
 
     if (window.Auth) window.Auth.onChange(() => this.refresh(true));
@@ -3207,6 +3205,221 @@ const Watchlist = {
       document.getElementById("watchlist-add-ticker").value = "";
       document.getElementById("watchlist-add-name").value = "";
       document.getElementById("watchlist-add-group").value = "";
+      // Reset autocomplete state so the next open starts clean.
+      this._selectedSymbol = null;
+      const sug = document.getElementById("watchlist-add-suggest");
+      if (sug) { sug.hidden = true; sug.innerHTML = ""; }
+      const sel = document.getElementById("watchlist-add-selected");
+      if (sel) { sel.hidden = true; sel.innerHTML = ""; }
+    }
+  },
+
+  // -----------------------------------------------------------------
+  // Symbol-search autocomplete (2026-05-22)
+  //
+  // Solves the "BTC means crypto OR US ETF" disambiguation problem by
+  // asking the backend /api/symbol-search for candidates as the user
+  // types. The selected row's canonical symbol (e.g. "BTC-USD" vs
+  // "BTC") is what we write to the watchlist — so the existing
+  // unique (user_id, ticker) constraint naturally separates them.
+  // -----------------------------------------------------------------
+
+  // Holds the currently-picked symbol from the autocomplete dropdown.
+  // Null means "fall back to literal input + _detectMarket on submit".
+  _selectedSymbol: null,
+  // Debounce token + last-query so we ignore stale fetches that arrive
+  // out of order.
+  _searchDebounceTimer: null,
+  _searchSeq: 0,
+  // Keyboard-nav: which suggestion is highlighted (-1 = none).
+  _suggestActive: -1,
+
+  /** One-time wiring of the autocomplete input + dropdown. Called from setup(). */
+  _wireSymbolSearch() {
+    const input = document.getElementById("watchlist-add-ticker");
+    const sug = document.getElementById("watchlist-add-suggest");
+    if (!input || !sug) return;
+
+    input.addEventListener("input", () => {
+      const q = input.value.trim();
+      // Any keystroke invalidates the previous "selection chip".
+      if (this._selectedSymbol && this._selectedSymbol.symbol !== q.toUpperCase()) {
+        this._selectedSymbol = null;
+        const selEl = document.getElementById("watchlist-add-selected");
+        if (selEl) { selEl.hidden = true; selEl.innerHTML = ""; }
+      }
+      clearTimeout(this._searchDebounceTimer);
+      if (!q) {
+        sug.hidden = true; sug.innerHTML = "";
+        input.setAttribute("aria-expanded", "false");
+        return;
+      }
+      // Debounce ~180ms so a typing burst hits the backend once.
+      this._searchDebounceTimer = setTimeout(() => this._searchSymbols(q), 180);
+    });
+
+    input.addEventListener("keydown", (e) => {
+      const items = Array.from(sug.querySelectorAll(".wl-add-suggest-item"));
+      if (e.key === "ArrowDown" && items.length) {
+        e.preventDefault();
+        this._suggestActive = Math.min(this._suggestActive + 1, items.length - 1);
+        this._paintActive(items);
+      } else if (e.key === "ArrowUp" && items.length) {
+        e.preventDefault();
+        this._suggestActive = Math.max(this._suggestActive - 1, 0);
+        this._paintActive(items);
+      } else if (e.key === "Enter") {
+        if (this._suggestActive >= 0 && items[this._suggestActive]) {
+          e.preventDefault();
+          items[this._suggestActive].click();
+        } else {
+          // No selection — submit with raw input (legacy path).
+          this._submitAdd();
+        }
+      } else if (e.key === "Escape") {
+        sug.hidden = true; sug.innerHTML = "";
+        input.setAttribute("aria-expanded", "false");
+      }
+    });
+
+    // Outside-click closes the dropdown — but only when the dropdown
+    // itself isn't the target (otherwise the click on a suggestion
+    // would never fire).
+    document.addEventListener("click", (e) => {
+      const wrap = document.getElementById("watchlist-add-symbol-wrap");
+      if (!wrap) return;
+      if (!wrap.contains(e.target)) {
+        sug.hidden = true;
+        input.setAttribute("aria-expanded", "false");
+      }
+    });
+  },
+
+  /** Highlight one suggestion + ensure it's visible. */
+  _paintActive(items) {
+    items.forEach((el, i) => el.classList.toggle("active", i === this._suggestActive));
+    const active = items[this._suggestActive];
+    if (active && typeof active.scrollIntoView === "function") {
+      active.scrollIntoView({ block: "nearest" });
+    }
+  },
+
+  /** Fetch suggestions from the backend; stale-request guarded by _searchSeq. */
+  async _searchSymbols(q) {
+    const seq = ++this._searchSeq;
+    const sug = document.getElementById("watchlist-add-suggest");
+    if (!sug) return;
+    // Show a quick "loading" hint so the user isn't staring at nothing.
+    sug.hidden = false;
+    sug.innerHTML = `<div class="wl-add-suggest-loading">查询中…</div>`;
+    try {
+      const apiBase = (window.APP_CONFIG && window.APP_CONFIG.API_BASE_URL) || "";
+      const r = await fetch(`${apiBase}/api/symbol-search?q=${encodeURIComponent(q)}&limit=8`);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      // Discard if a newer query has already fired.
+      if (seq !== this._searchSeq) return;
+      this._renderSuggest(j.items || []);
+    } catch (e) {
+      if (seq !== this._searchSeq) return;
+      sug.innerHTML = `<div class="wl-add-suggest-error">查询失败：${e.message}</div>`;
+    }
+  },
+
+  /** Render the dropdown from a list of {symbol,name,exchange,market,quote_type}. */
+  _renderSuggest(items) {
+    const sug = document.getElementById("watchlist-add-suggest");
+    const input = document.getElementById("watchlist-add-ticker");
+    if (!sug || !input) return;
+    if (!items.length) {
+      sug.hidden = true; sug.innerHTML = "";
+      input.setAttribute("aria-expanded", "false");
+      return;
+    }
+    // Chinese label for each market — keeps the UI consistent with the
+    // existing market chips on watchlist rows.
+    const marketZh = {
+      us: "美股", hk: "港股", cn: "A股", crypto: "加密",
+      commodity: "期货", forex: "外汇", index: "指数", other: "其他",
+    };
+    // Chinese label for the asset type, when available.
+    const typeZh = (qt) => {
+      const k = (qt || "").toUpperCase();
+      if (k === "EQUITY")          return "股票";
+      if (k === "ETF")             return "ETF";
+      if (k === "MUTUALFUND")      return "基金";
+      if (k === "CRYPTOCURRENCY")  return "加密币";
+      if (k === "FUTURE")          return "期货";
+      if (k === "CURRENCY")        return "外汇";
+      if (k === "INDEX")           return "指数";
+      return "";
+    };
+
+    sug.innerHTML = items.map((it, i) => {
+      const mZh = marketZh[it.market] || it.market || "其他";
+      const tZh = typeZh(it.quote_type);
+      const exch = it.exchange ? ` · ${escapeHtml(it.exchange)}` : "";
+      return `
+        <button type="button" class="wl-add-suggest-item" data-idx="${i}" role="option">
+          <div class="wl-add-suggest-row1">
+            <span class="wl-add-suggest-sym">${escapeHtml(it.symbol)}</span>
+            <span class="wl-add-suggest-market wl-add-market-${escapeHtml(it.market || "other")}">${escapeHtml(mZh)}</span>
+            ${tZh ? `<span class="wl-add-suggest-type">${escapeHtml(tZh)}</span>` : ""}
+          </div>
+          <div class="wl-add-suggest-row2">
+            <span class="wl-add-suggest-name">${escapeHtml(it.name || "")}</span>
+            <span class="wl-add-suggest-meta">${escapeHtml((it.quote_type || "").toLowerCase())}${exch}</span>
+          </div>
+        </button>`;
+    }).join("");
+    sug.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    this._suggestActive = -1;
+
+    // Wire clicks.
+    sug.querySelectorAll(".wl-add-suggest-item").forEach(btn => {
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const idx = parseInt(btn.dataset.idx, 10);
+        const picked = items[idx];
+        if (picked) this._selectSymbol(picked);
+      });
+    });
+  },
+
+  /** Accept a suggestion: stash it + render the visible chip + clear input. */
+  _selectSymbol(item) {
+    this._selectedSymbol = item;
+    const input = document.getElementById("watchlist-add-ticker");
+    const sug = document.getElementById("watchlist-add-suggest");
+    const sel = document.getElementById("watchlist-add-selected");
+    const nameInput = document.getElementById("watchlist-add-name");
+    if (input)  input.value = item.symbol;
+    if (sug)   { sug.hidden = true; sug.innerHTML = ""; input?.setAttribute("aria-expanded", "false"); }
+    // Auto-fill nickname with the company/asset name (user can edit).
+    if (nameInput && !nameInput.value && item.name && !item.name.startsWith("(")) {
+      nameInput.value = item.name;
+    }
+    // Render a compact "selected" chip so it's obvious what's picked.
+    if (sel) {
+      const marketZh = {
+        us: "美股", hk: "港股", cn: "A股", crypto: "加密",
+        commodity: "期货", forex: "外汇", index: "指数", other: "其他",
+      };
+      const mZh = marketZh[item.market] || item.market || "其他";
+      sel.hidden = false;
+      sel.innerHTML = `
+        <span class="wl-add-selected-chip">
+          <span class="wl-add-selected-sym">${escapeHtml(item.symbol)}</span>
+          <span class="wl-add-selected-name">${escapeHtml(item.name || "")}</span>
+          <span class="wl-add-market-${escapeHtml(item.market || "other")} wl-add-suggest-market">${escapeHtml(mZh)}</span>
+          <button type="button" class="wl-add-selected-clear" title="重新选择">×</button>
+        </span>`;
+      sel.querySelector(".wl-add-selected-clear")?.addEventListener("click", () => {
+        this._selectedSymbol = null;
+        sel.hidden = true; sel.innerHTML = "";
+        if (input) { input.value = ""; input.focus(); }
+      });
     }
   },
 
@@ -3232,19 +3445,33 @@ const Watchlist = {
   },
 
   async _submitAdd() {
-    const ticker = document.getElementById("watchlist-add-ticker").value.trim().toUpperCase();
+    // Prefer the autocomplete-picked symbol when present — it carries
+    // the canonical ticker (e.g. BTC-USD vs BTC) + correct market so we
+    // don't have to fall back to the regex-based _detectMarket guesser.
+    const picked = this._selectedSymbol;
+    const rawTicker = document.getElementById("watchlist-add-ticker").value.trim().toUpperCase();
+    const ticker = (picked && picked.symbol) ? picked.symbol.toUpperCase() : rawTicker;
     const name   = document.getElementById("watchlist-add-name").value.trim();
     const group  = document.getElementById("watchlist-add-group").value.trim();
     if (!ticker) return;
-    const market = this._detectMarket(ticker);
+    // Market: trust the picked row first; otherwise fall back to the
+    // legacy regex heuristic so old code paths (e.g. import-from-history)
+    // keep working.
+    const market = (picked && picked.market) ? picked.market : this._detectMarket(ticker);
+    // Auto-fill display_name from the picked row's name if the user
+    // didn't type one. Always strips the "(无在线匹配...)" placeholder.
+    let displayName = name;
+    if (!displayName && picked && picked.name && !picked.name.startsWith("(")) {
+      displayName = picked.name;
+    }
     if (this._useRemote()) {
-      const r = await window.Watchlist.add({ ticker, display_name: name || null, market, custom_group: group || null });
+      const r = await window.Watchlist.add({ ticker, display_name: displayName || null, market, custom_group: group || null });
       if (r.error) { alert("添加失败：" + r.error); return; }
     } else {
       // localStorage fallback
       const all = this._readLocal();
       if (all.some(x => x.ticker === ticker)) { alert(`${ticker} 已在自选中`); return; }
-      all.unshift({ id: "loc-" + Date.now(), ticker, display_name: name || null, market, custom_group: group || null, added_at: new Date().toISOString() });
+      all.unshift({ id: "loc-" + Date.now(), ticker, display_name: displayName || null, market, custom_group: group || null, added_at: new Date().toISOString() });
       localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all));
     }
     this._toggleAddForm(false);

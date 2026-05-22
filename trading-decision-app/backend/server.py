@@ -332,6 +332,29 @@ async def quotes(tickers: str = "") -> JSONResponse:
     return JSONResponse({"items": fetch_quotes(items)})
 
 
+# ---- symbol autocomplete (自选 add-form disambiguation) -----------------
+
+@app.get("/api/symbol-search")
+async def symbol_search_endpoint(q: str = "", limit: int = 8) -> JSONResponse:
+    """Free-text ticker search for the 自选 add-form autocomplete.
+
+    Returns up to `limit` candidate symbols, each with name + exchange +
+    quote_type + market so the user can disambiguate between e.g.
+    BTC (Grayscale ETF) vs BTC-USD (Bitcoin spot). Backed by Finnhub
+    (when key present), Yahoo Finance (no key), and a curated fallback
+    for the most common ambiguous tickers (BTC/ETH/SOL/…). Always
+    returns at least one row — never errors back.
+    """
+    from symbol_search import search as _symbol_search
+    q = (q or "").strip()
+    if not q:
+        return JSONResponse({"items": []})
+    if len(q) > 64:
+        return JSONResponse({"error": "query too long"}, status_code=400)
+    items = await asyncio.to_thread(_symbol_search, q, max(1, min(limit, 20)))
+    return JSONResponse({"items": items})
+
+
 # ---- fundamentals dashboard (基本面看板) -------------------------------
 
 @app.get("/api/fundamentals")
