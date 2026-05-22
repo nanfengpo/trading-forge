@@ -297,20 +297,45 @@ def _call_openai_compat(provider: str, model: str, payload: Dict[str, Any]) -> s
 
 
 def _call_anthropic(model: str, payload: Dict[str, Any]) -> str:
-    """Send the prompt via the Anthropic Messages API (Claude)."""
+    """Send the prompt via the Anthropic Messages API (Claude).
+
+    Note (2026-05-22): Opus 4.7 and newer Claude models **deprecated the
+    `temperature` parameter** — passing it returns HTTP 400. We previously
+    sent `temperature=0.4` unconditionally, which caused the Anthropic call
+    to fail and the fallback chain to silently land on DeepSeek. We now only
+    include `temperature` for older models that still accept it.
+    """
     try:
         import anthropic  # type: ignore
     except ImportError as e:
         raise RuntimeError("anthropic SDK not installed") from e
     key = os.environ[_ANTHROPIC_CFG["env"]]
     client = anthropic.Anthropic(api_key=key, timeout=120)
-    resp = client.messages.create(
-        model=model,
-        max_tokens=5500,
-        temperature=0.4,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+
+    # Only legacy / non-Opus-4.7 Claude models still accept temperature.
+    # Anything starting with "claude-opus-4" or "claude-sonnet-4-7" /
+    # "claude-haiku-4-5"+ rejects it.
+    kwargs: Dict[str, Any] = {
+        "model": model,
+        "max_tokens": 5500,
+        "system": _SYSTEM_PROMPT,
+        "messages": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+    }
+    m = (model or "").lower()
+    _temperature_supported = not (
+        m.startswith("claude-opus-4-7")
+        or m.startswith("claude-opus-4-8")
+        or m.startswith("claude-opus-5")
+        or m.startswith("claude-sonnet-4-7")
+        or m.startswith("claude-sonnet-4-8")
+        or m.startswith("claude-sonnet-5")
+        or m.startswith("claude-haiku-4-5")
+        or m.startswith("claude-haiku-5")
     )
+    if _temperature_supported:
+        kwargs["temperature"] = 0.4
+
+    resp = client.messages.create(**kwargs)
     parts: List[str] = []
     for blk in resp.content or []:
         text = getattr(blk, "text", None)
