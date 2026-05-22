@@ -71,26 +71,29 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("数据中心REIT",      ["EQIX", "DLR"]),
             ("超大规模云厂商",      ["GOOGL", "MSFT", "META", "AMZN"]),
         ],
-        # weights MUST sum to 100. Distribute across 20 metrics by sector character.
-        # AI = growth-tilted: PEG-Fwd + EPS growth dominate; margins matter (gross
-        # margin is the moat indicator); debt+yield deprioritized.
+        # weights MUST sum to 100. Re-derived via 5-panel debate (Value /
+        # Growth / Quant / Sector-spec / Risk) in Round 2 — median + reasoned
+        # overrides. ROIC raised +7 (capital-efficiency moat); EPS growth
+        # trimmed -5 (consensus that headline growth gets double-counted via
+        # PEG); leverage block lifted +3 (cohort isn't uniformly net-cash —
+        # CLS/SMCI/VRT/ALAB carry real debt).
         "weights": {
-            # Valuation (35)
-            "pe": 3, "pe_fwd": 6, "peg_av": 8, "peg_fwd": 12, "ps": 3, "pb": 0, "ev_ebitda": 3,
-            # Profitability (20)
-            "eps": 0, "roe": 4, "roic": 4, "gross_margin": 8, "op_margin": 4,
-            # Growth (25)
-            "rev_growth": 11, "eps_growth": 14,
-            # Cash flow (8)
+            # Valuation (32)
+            "pe": 2, "pe_fwd": 5, "peg_av": 6, "peg_fwd": 12, "ps": 4, "pb": 0, "ev_ebitda": 3,
+            # Profitability (27) — ROIC + GM = the QMJ + Novy-Marx quality axes
+            "eps": 0, "roe": 3, "roic": 11, "gross_margin": 8, "op_margin": 5,
+            # Growth (20)
+            "rev_growth": 11, "eps_growth": 9,
+            # Cash flow (8) — owner-earnings reality check
             "fcf_yield": 8,
-            # Leverage (4)
-            "de": 2, "interest_cov": 2, "current_ratio": 0,
-            # Shareholder (3)
-            "div_yield": 1, "buyback_yield": 2,
-            # Risk (5)
-            "beta": 5,
+            # Leverage (5) — non-zero because cohort isn't uniformly net-cash
+            "de": 3, "interest_cov": 2, "current_ratio": 0,
+            # Shareholder (2)
+            "div_yield": 0, "buyback_yield": 2,
+            # Risk (6) — late-cycle high-beta penalty
+            "beta": 6,
         },
-        "weight_rationale": "成长赛道，前瞻 PEG + EPS 增速最关键；毛利率反映护城河；股息/D-E 权重压低。",
+        "weight_rationale": "成长 × 资本效率 × 现金流：ROIC 11 + 毛利 8 + 营收 11 + 前瞻 PEG 12 共占 42 — 区分真复利与卖 GPU 转售。",
     },
     "energy": {
         "id": "energy",
@@ -105,25 +108,29 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("公用事业电力",        ["NEE", "DUK", "SO", "AEP", "D", "SRE", "EXC"]),
             ("IPP / 核电",         ["VST", "CEG", "TLN"]),
         ],
-        # Energy/Utilities = mature cash cows: absolute valuation + cash flow +
-        # dividend yield + leverage health (interest coverage) dominate.
+        # Re-derived via 5-panel debate. Quant + Sector argued EV/EBITDA is
+        # THE energy metric (MLP/upstream standard; DD&A makes PE noisy) and
+        # the median lifted from 2 → 12 (+10). ROIC raised +5 to separate
+        # disciplined operators (XOM, EOG) from value traps. PE cut -6 (the
+        # classic "cheap-at-the-top" cyclical trap). EPS growth -3 (commodity-
+        # price artifact, not skill).
         "weights": {
-            # Valuation (32)
-            "pe": 9, "pe_fwd": 8, "peg_av": 4, "peg_fwd": 3, "ps": 2, "pb": 4, "ev_ebitda": 2,
-            # Profitability (15)
-            "eps": 2, "roe": 4, "roic": 5, "gross_margin": 2, "op_margin": 2,
-            # Growth (10)
-            "rev_growth": 4, "eps_growth": 6,
-            # Cash flow (15) — cash cows
-            "fcf_yield": 15,
-            # Leverage (12) — capital intensive
-            "de": 4, "interest_cov": 6, "current_ratio": 2,
-            # Shareholder (12) — payouts are part of the thesis
-            "div_yield": 8, "buyback_yield": 4,
-            # Risk (4)
-            "beta": 4,
+            # Valuation (33) — EV/EBITDA dominates (debt-adjusted across MLP/E&P/utility)
+            "pe": 3, "pe_fwd": 5, "peg_av": 2, "peg_fwd": 3, "ps": 2, "pb": 6, "ev_ebitda": 12,
+            # Profitability (21) — ROIC separates capital-allocation winners
+            "eps": 1, "roe": 5, "roic": 10, "gross_margin": 2, "op_margin": 3,
+            # Growth (6) — production growth at peak is value-destructive
+            "rev_growth": 3, "eps_growth": 3,
+            # Cash flow (14) — post-2021 shareholder-return thesis lives here
+            "fcf_yield": 14,
+            # Leverage (13) — 2014-16 + 2020 taught us capital structure = survival
+            "de": 6, "interest_cov": 5, "current_ratio": 2,
+            # Shareholder (8) — energy is a yield sector post-2021
+            "div_yield": 5, "buyback_yield": 3,
+            # Risk (5) — moderate; commodity beta is partly already in EV/EBITDA
+            "beta": 5,
         },
-        "weight_rationale": "成熟现金牛，绝对估值 + FCF 收益率 + 股息率是核心；杠杆与利息保障防雷。",
+        "weight_rationale": "现金 × 资本结构：EV/EBITDA 12 + FCF 收益率 14 + ROIC 10 共占 36 — post-2021 股东回报 thesis；杠杆+股息 22 防穿越油价低谷。",
     },
     "materials": {
         "id": "materials",
@@ -139,25 +146,29 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("矿业巨头",           ["BHP", "RIO", "VALE"]),
             ("工业气体 / 化工",    ["LIN", "APD", "SHW"]),
         ],
-        # Materials = strong cycle: EPS inflection + P/B (vs replacement cost) +
-        # balance sheet matters during commodity downcycles.
+        # Re-derived via 5-panel debate. THE biggest baseline error: EPS-growth
+        # at 14 (cycle-peak EPS is a CONTRA-indicator, not a buy signal).
+        # All 5 panellists agreed: cut to 4. EV/EBITDA +9 (cyclical comp
+        # standard for miners/specialty chems), ROIC +5 (separates LIN/SHW
+        # quality compounders from FCX/AA pure cyclicals), PE -3 (peak-cycle PE
+        # trap), Rev growth -5 (capacity expansion at peak = value destruction).
         "weights": {
-            # Valuation (28)
-            "pe": 6, "pe_fwd": 8, "peg_av": 2, "peg_fwd": 2, "ps": 2, "pb": 6, "ev_ebitda": 2,
-            # Profitability (15)
-            "eps": 2, "roe": 4, "roic": 5, "gross_margin": 2, "op_margin": 2,
-            # Growth (22) — cycle indicator
-            "rev_growth": 8, "eps_growth": 14,
-            # Cash flow (12) — cushion through cycles
-            "fcf_yield": 12,
-            # Leverage (13) — capital intensive, balance sheet survives bottoms
-            "de": 5, "interest_cov": 5, "current_ratio": 3,
+            # Valuation (35) — EV/EBITDA is the cyclical comp standard
+            "pe": 3, "pe_fwd": 4, "peg_av": 3, "peg_fwd": 4, "ps": 3, "pb": 7, "ev_ebitda": 11,
+            # Profitability (24) — ROIC separates specialty from commodity
+            "eps": 2, "roe": 6, "roic": 10, "gross_margin": 4, "op_margin": 4,
+            # Growth (7) — EPS-growth-at-top is a contra-indicator
+            "rev_growth": 3, "eps_growth": 4,
+            # Cash flow (11) — through-cycle FCF discipline
+            "fcf_yield": 11,
+            # Leverage (11) — survive the down-cycle
+            "de": 5, "interest_cov": 4, "current_ratio": 2,
             # Shareholder (6)
             "div_yield": 4, "buyback_yield": 2,
             # Risk (4)
             "beta": 4,
         },
-        "weight_rationale": "强周期，EPS 同比拐点 + PB（vs 重置成本） + 资产负债表是核心；周期底部看 FCF 与利息保障。",
+        "weight_rationale": "周期股反思：EPS-growth 从 14 砍到 4（周期顶部 EPS 是反向指标）；EV/EBITDA 11 + P/B 7 + ROIC 10 + FCF 11 是通过周期底部的真实信号。",
     },
     "financial": {
         "id": "financial",
@@ -172,25 +183,29 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("保险 / 多元化",     ["BRK-B"]),
             ("加密 / 互联网券商", ["COIN", "HOOD"]),
         ],
-        # Financials = P/B + ROE classic; D/E meaningless for banks (use diff
-        # metric) so cap leverage weight; dividend + buyback yield big.
+        # Re-derived via 5-panel debate. Banks are P/B × ROE (Penman 1996 RIM
+        # identity: P/B = (ROE − g)/(COE − g)). Quant pushed P/B to 20, Sector to
+        # 14, consensus landed at 16. ROE lifted to 16 (must match P/B to encode
+        # the identity). Beta +3 (2023 SVB lesson). EV/EBITDA / FCF /
+        # interest_cov / current_ratio → 0 (category errors — deposits aren't
+        # debt, ops/financing inseparable).
         "weights": {
-            # Valuation (32)
-            "pe": 10, "pe_fwd": 8, "peg_av": 3, "peg_fwd": 3, "ps": 0, "pb": 6, "ev_ebitda": 2,
-            # Profitability (22) — ROE is the king metric for banks
-            "eps": 2, "roe": 10, "roic": 4, "gross_margin": 0, "op_margin": 6,
-            # Growth (12)
-            "rev_growth": 4, "eps_growth": 8,
-            # Cash flow (6)
-            "fcf_yield": 6,
-            # Leverage (8) — soft (banks are leveraged by design)
-            "de": 2, "interest_cov": 4, "current_ratio": 2,
-            # Shareholder (15) — payouts are core thesis
-            "div_yield": 9, "buyback_yield": 6,
-            # Risk (5)
-            "beta": 5,
+            # Valuation (34) — P/B is THE bank metric
+            "pe": 6, "pe_fwd": 6, "peg_av": 2, "peg_fwd": 4, "ps": 0, "pb": 16, "ev_ebitda": 0,
+            # Profitability (28) — ROE × P/B is the Gordon-growth-via-RIM identity
+            "eps": 3, "roe": 16, "roic": 4, "gross_margin": 0, "op_margin": 5,
+            # Growth (8)
+            "rev_growth": 3, "eps_growth": 5,
+            # Cash flow (3) — banks have no real FCF concept; minimal weight
+            "fcf_yield": 3,
+            # Leverage (4) — most metrics are category errors; only D/E retained
+            "de": 4, "interest_cov": 0, "current_ratio": 0,
+            # Shareholder (15) — capital return is half of total return
+            "div_yield": 8, "buyback_yield": 7,
+            # Risk (8) — 2023 SVB blowup: bank-beta-to-credit-cycle is fundamental
+            "beta": 8,
         },
-        "weight_rationale": "金融股估值锚 PE × PB；ROE 是王牌；股息+回购的资本回报权重高；D/E 因为银行天然加杠杆而权重压低。",
+        "weight_rationale": "P/B × ROE 双锚 (Penman RIM 恒等式)：P/B 16 + ROE 16 共占 32 — 银行估值的代数核心；股息+回购 15 + Beta 8 防 2023 SVB 类型尾部。",
     },
     "biotech": {
         "id": "biotech",
@@ -204,25 +219,29 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("医疗器械 / 诊断",     ["ABT", "TMO", "DHR", "ISRG", "MDT", "BSX"]),
             ("Biotech / 创新药",   ["REGN", "VRTX", "MRNA", "GILD", "AMGN", "BIIB"]),
         ],
-        # Biotech = pipeline-driven: PEG-Fwd + gross margins (innovation premium)
-        # + balance sheet (R&D runway) + EPS growth all matter.
+        # Re-derived via 5-panel debate. Biotech cohort is BIMODAL — clinical-
+        # stage cash-burners vs commercial-stage cash machines. Risk panel's
+        # core argument: current_ratio is the binary-survival metric for
+        # clinical-stage names → lifted 2 → 8 (+6). EPS-growth -7 (binary/lumpy
+        # readouts, not smooth). PEG-Fwd -3 (meaningless for pre-revenue).
+        # P/S +3 (useful for pre-rev cohort). EV/EBITDA +4 (catches M&A roll-ups).
         "weights": {
-            # Valuation (28)
-            "pe": 3, "pe_fwd": 6, "peg_av": 6, "peg_fwd": 10, "ps": 3, "pb": 0, "ev_ebitda": 0,
-            # Profitability (22) — margins indicate moat
-            "eps": 0, "roe": 4, "roic": 4, "gross_margin": 10, "op_margin": 4,
-            # Growth (22)
-            "rev_growth": 10, "eps_growth": 12,
-            # Cash flow (10) — biotechs burn cash; FCF + cash on hand is survival
-            "fcf_yield": 10,
-            # Leverage (8) — R&D runway
-            "de": 3, "interest_cov": 3, "current_ratio": 2,
-            # Shareholder (4)
-            "div_yield": 1, "buyback_yield": 3,
+            # Valuation (29)
+            "pe": 3, "pe_fwd": 4, "peg_av": 3, "peg_fwd": 7, "ps": 6, "pb": 2, "ev_ebitda": 4,
+            # Profitability (25) — gross margin (80%+ on branded drugs) is the moat
+            "eps": 1, "roe": 4, "roic": 6, "gross_margin": 10, "op_margin": 4,
+            # Growth (14) — ramp validates clinical→commercial conversion
+            "rev_growth": 9, "eps_growth": 5,
+            # Cash flow (8)
+            "fcf_yield": 8,
+            # Leverage (15) — cash runway is BINARY SURVIVAL for clinical-stage
+            "de": 4, "interest_cov": 3, "current_ratio": 8,
+            # Shareholder (3)
+            "div_yield": 1, "buyback_yield": 2,
             # Risk (6)
             "beta": 6,
         },
-        "weight_rationale": "管线驱动，前瞻 PEG + 毛利率（创新溢价）+ 现金流（R&D runway）最关键；PE 绝对值次要（很多公司研发期亏损）。",
+        "weight_rationale": "双峰 cohort：商业化阶段看毛利 10 + ROIC 6 + 营收 9；临床阶段看现金跑道 (current_ratio 8) + 杠杆 7 — 总安全权重 15 是所有板块中最高。",
     },
     "crypto": {
         "id": "crypto",
