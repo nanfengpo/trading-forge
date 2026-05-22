@@ -5,15 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TradingForge · 智策 · 多智能体投研工作台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/styles.css?v=20260526c">
+<link rel="stylesheet" href="/styles.css?v=20260526d">
 </head>
 <body>
 
-<header class="hero">
-  <div class="brand-row">
+<!-- Unified top bar: logo (= home link) on the left, tabs aligned right. -->
+<header class="topbar" id="topbar">
+  <a class="brand-link" data-go="home" href="/" title="返回首页 · 智策 TradingForge" aria-label="返回首页">
     <span class="brand-logo" aria-hidden="true">
       <!-- inline SVG so it follows currentColor + dark theme -->
-      <svg viewBox="0 0 100 100" width="46" height="46" fill="none" stroke="currentColor">
+      <svg viewBox="0 0 100 100" width="38" height="38" fill="none" stroke="currentColor">
         <polygon points="50,8 88,30 88,70 50,92 12,70 12,30" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
         <circle cx="32" cy="32" r="5" fill="currentColor" stroke="none"/>
         <circle cx="68" cy="32" r="5" fill="currentColor" stroke="none"/>
@@ -26,31 +27,27 @@
         <circle cx="50" cy="50" r="9" fill="currentColor" stroke="none"/>
       </svg>
     </span>
-    <div class="brand-text">
-      <div class="meta">TRADINGFORGE · 智策</div>
-      <h1>智策 <span class="brand-en">TradingForge</span></h1>
-      <div class="sub serif">多智能体投研工作台 · 12 agents → 78 strategies → 实时可视化</div>
-    </div>
-  </div>
-</header>
+    <span class="brand-text">
+      <span class="brand-title">智策</span>
+      <span class="brand-en">TradingForge</span>
+    </span>
+  </a>
 
-<nav class="tabs" id="tabs">
-  <div class="tabs-left">
-    <button class="active" data-tab="home">首页</button>
-    <button data-tab="watchlist">⭐ 自选</button>
-    <button data-tab="decisions" id="tab-btn-decisions">🎯 决策<span class="nav-badge" id="decisions-nav-badge" style="display:none;"></span></button>
-    <button data-tab="fundamentals">📊 基本面</button>
-    <button data-tab="opportunities">⚡ 24h 机会<span class="nav-badge" id="opps-nav-badge" style="display:none;"></span></button>
-    <button data-tab="library">策略库</button>
-    <button data-tab="favorites">⭐ 收藏</button>
-    <button data-tab="profile">个人中心</button>
-  </div>
-  <div class="tabs-right">
-    <span id="auth-status" class="auth-status muted" style="display:none;"></span>
-    <button id="auth-button" class="icon-btn" title="登录 / 注册">👤 登录</button>
-    <button id="theme-toggle" class="icon-btn" title="切换日间/夜间模式" aria-label="切换主题">🌙</button>
-  </div>
-</nav>
+  <nav class="tabs" id="tabs">
+    <div class="tabs-left">
+      <button data-tab="watchlist">⭐ 自选</button>
+      <button data-tab="decisions" id="tab-btn-decisions">🎯 决策<span class="nav-badge" id="decisions-nav-badge" style="display:none;"></span></button>
+      <button data-tab="fundamentals">📊 基本面</button>
+      <button data-tab="opportunities">⚡ 24h 机会<span class="nav-badge" id="opps-nav-badge" style="display:none;"></span></button>
+      <button data-tab="library">策略库</button>
+      <button data-tab="favorites">⭐ 收藏</button>
+      <button data-tab="profile" id="tab-btn-profile">👤 个人中心</button>
+    </div>
+    <div class="tabs-right">
+      <button id="theme-toggle" class="icon-btn" title="切换日间/夜间模式" aria-label="切换主题">🌙</button>
+    </div>
+  </nav>
+</header>
 
 <!-- Auth modal -->
 <div id="auth-modal" class="auth-modal" style="display:none;">
@@ -850,11 +847,23 @@
 
   <!-- ===== Sub-tab: 资料 ===== -->
   <div class="profile-pane active" data-profile-pane="info">
+
+    <!-- Auth status + login/logout — moved here from the old top-right
+         corner. Keep the auth-status / auth-button IDs intact so
+         AuthUI.init() in app.js keeps wiring them up automatically. -->
+    <div class="panel profile-auth-panel">
+      <div class="head">登录状态</div>
+      <div class="body profile-auth-body">
+        <span id="auth-status" class="auth-status muted">本地模式 · 历史保存于浏览器</span>
+        <button id="auth-button" class="btn primary small" title="登录 / 注册">👤 登录</button>
+      </div>
+    </div>
+
     <div class="profile-grid">
       <div class="panel">
         <div class="head">账号信息</div>
         <div class="body" id="profile-info">
-          <div class="muted" style="padding:12px 0;">未登录 — 请右上角登录后管理账号资料、数据源 / 大模型 API key、查看用量与历史。</div>
+          <div class="muted" style="padding:12px 0;">未登录 — 在上面的"登录状态"面板点击登录后即可管理账号资料、数据源 / 大模型 API key、查看用量与历史。</div>
         </div>
       </div>
       <div class="panel">
@@ -1066,10 +1075,10 @@
   }
 </script>
 <script src="/auth.js"></script>
-<script src="/comprehensive.js?v=20260526c"></script>
+<script src="/comprehensive.js?v=20260526d"></script>
 <script src="/strategies.js"></script>
-<script src="/app.js?v=20260526c"></script>
+<script src="/app.js?v=20260526d"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/fundamentals.js?v=20260526c"></script>
+<script src="/fundamentals.js?v=20260526d"></script>
 </body>
 </html>
