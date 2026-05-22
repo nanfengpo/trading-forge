@@ -844,12 +844,24 @@
         const hz = h[o.key] || {};
         const risks = (hz.key_risks || []).map(r => `<li>${esc(r)}</li>`).join("");
         const strategies = _normStrategies(hz);
+        // Strategy item layout (2026-05-22 rev 6):
+        // The old layout packed [rank | name | match-chip] into a single
+        // flex-wrap row. When the parent horizon card was narrow (≤300px,
+        // common when the comp-sidebar is expanded) the name span lost
+        // its space and Chinese characters wrapped per-char.
+        // New layout:
+        //   [rank-badge] [name (own row, allowed to wrap normally)]
+        //                                                  [match-chip]
+        // → name always gets the full card width
+        // → match chip and rank are visually separated as small badges
         const stratItems = strategies.map((s, i) => `
           <li class="comp-h-strat-item">
             <div class="comp-h-strat-head">
-              <span class="comp-h-strat-rank">#${i + 1}</span>
-              ${s.name ? `<span class="comp-h-strat-name">${esc(s.name)}</span>` : ""}
-              ${s.match_score ? matchChip(s.match_score) : ""}
+              <div class="comp-h-strat-badges">
+                <span class="comp-h-strat-rank">#${i + 1}</span>
+                ${s.match_score ? matchChip(s.match_score) : ""}
+              </div>
+              ${s.name ? `<div class="comp-h-strat-name">${esc(s.name)}</div>` : ""}
             </div>
             ${s.thesis ? `<p class="comp-h-strat-thesis">${esc(s.thesis)}</p>` : ""}
             ${s.execution ? `<p class="comp-h-strat-exec"><span class="comp-h-strat-exec-label">执行：</span>${esc(s.execution)}</p>` : ""}

@@ -1358,13 +1358,14 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 
 /* Sidebar layout: list on the left, detail on the right ----------------- */
 .watchlist-shell {
-  display: grid; grid-template-columns: 320px 1fr; gap: 16px;
+  display: grid; grid-template-columns: 272px 1fr; gap: 16px;
   align-items: start;
 }
 .watchlist-sidebar {
   background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 10px; overflow: hidden;
-  max-height: calc(100vh - 240px); overflow-y: auto;
+  border-radius: 12px; overflow: hidden;
+  max-height: calc(100vh - 220px); overflow-y: auto;
+  position: sticky; top: 12px;
 }
 .watchlist-empty { padding: 28px 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
 .watchlist-empty:empty { display: none; }
@@ -1433,34 +1434,86 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 /* Main detail panel ------------------------------------------------------ */
 .watchlist-main {
   background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 10px; padding: 18px 22px; min-height: 360px;
+  border-radius: 12px; padding: 16px 18px; min-height: 360px;
 }
 .watchlist-main-empty {
   display: flex; align-items: center; justify-content: center;
   min-height: 240px; color: var(--text-muted); font-size: 13px;
 }
+
+/* 3-zone header: id (ticker+name) | price+change | actions
+   — single row, sticky-friendly, baseline aligned. */
 .wl-main-head {
-  display: flex; flex-wrap: wrap; align-items: baseline;
-  gap: 10px 16px; margin-bottom: 16px;
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 8px 18px; margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
 }
-.wl-main-ticker { font-size: 22px; font-weight: 700; }
-.wl-main-name   { color: var(--text-muted); font-size: 14px; }
-.wl-main-price  { font-family: ui-monospace, monospace; font-size: 24px; font-weight: 600; }
-.wl-main-pct    { font-family: ui-monospace, monospace; font-size: 15px; font-weight: 600; }
-.wl-main-pct.up   { color: #2e7d32; }
-.wl-main-pct.down { color: #c0392b; }
+.wl-main-head-id {
+  display: flex; align-items: baseline; gap: 10px;
+  min-width: 0; flex: 0 1 auto;
+}
+.wl-main-head-price {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-left: 4px;
+}
+.wl-main-ticker {
+  font-size: 22px; font-weight: 700; letter-spacing: 0.01em;
+  font-feature-settings: "tnum" 1;
+}
+.wl-main-name {
+  color: var(--text-muted); font-size: 13px; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 280px;
+}
+.wl-main-price {
+  font-family: ui-monospace, monospace; font-size: 26px; font-weight: 600;
+  letter-spacing: 0.005em;
+  font-feature-settings: "tnum" 1;
+}
+.wl-main-pct {
+  font-family: ui-monospace, monospace; font-size: 14px; font-weight: 600;
+  padding: 2px 8px; border-radius: 6px;
+  font-feature-settings: "tnum" 1;
+}
+.wl-main-pct.up   { color: #2e7d32; background: rgba(46,125,50,0.10); }
+.wl-main-pct.down { color: #c0392b; background: rgba(192,57,43,0.10); }
 .wl-main-actions { margin-left: auto; display: flex; gap: 8px; }
 
-/* Quick stats grid: OHLC + 成交额 + 市值 + P/E */
+/* Compact horizontal stats strip.
+   Replaces the old 8-cell grid that often wrapped to 2 rows with half
+   the cells empty. Now: a flex row of (label,value) pairs that all sit
+   on one line on wide screens, wrap gracefully on narrow.
+   The source badge floats to the right edge as a small chip. */
 .wl-stats {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px 16px;
-  padding: 14px 16px; margin-bottom: 18px;
-  background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px;
-  font-size: 13px;
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 6px 18px;
+  padding: 10px 14px; margin-bottom: 14px;
+  background: var(--bg-soft); border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12.5px;
 }
-.wl-stat-label { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
-.wl-stat-value { font-family: ui-monospace, monospace; font-weight: 500; }
+.wl-stat {
+  display: flex; align-items: baseline; gap: 6px;
+  flex: 0 0 auto;
+}
+.wl-stat-label {
+  color: var(--text-muted); font-size: 10.5px;
+  letter-spacing: 0.04em; font-weight: 600;
+}
+.wl-stat-value {
+  font-family: ui-monospace, monospace; font-weight: 500;
+  font-size: 12.5px;
+  font-feature-settings: "tnum" 1;
+}
+.wl-stat-source {
+  margin-left: auto;
+  font-size: 10px; letter-spacing: 0.06em;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--bg); color: var(--text-muted);
+  border: 1px solid var(--border);
+  text-transform: lowercase;
+}
 
 /* Latest decision card */
 .wl-decision-block { margin-top: 14px; }
@@ -1495,9 +1548,20 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   text-align: center; color: var(--text-muted); font-size: 13px;
 }
 
+@media (max-width: 1100px) {
+  .watchlist-shell { grid-template-columns: 240px 1fr; gap: 12px; }
+}
 @media (max-width: 900px) {
   .watchlist-shell { grid-template-columns: 1fr; }
-  .watchlist-sidebar { max-height: 320px; }
+  .watchlist-sidebar { position: relative; top: auto; max-height: 320px; }
+  .wl-main-actions { margin-left: 0; }
+  .wl-stats { font-size: 12px; gap: 4px 14px; }
+}
+@media (max-width: 640px) {
+  .watchlist-main { padding: 14px; }
+  .wl-main-head { gap: 6px 10px; }
+  .wl-main-ticker { font-size: 18px; }
+  .wl-main-price { font-size: 22px; }
 }
 
 /* Strategy library "favorites only" chip */
@@ -3035,13 +3099,16 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   color: var(--accent); font-size: 14px;
 }
 
-/* --- Horizon cards --- */
+/* --- Horizon cards (rev 6 — auto-fit so 3-col gracefully degrades to 2 then 1 when narrow) --- */
 .comp-h-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
 }
 .comp-h-card {
   background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
   padding: 16px; position: relative;
+  min-width: 0;                              /* prevent grid blowout */
 }
 .comp-h-short { border-left: 3px solid #4f46e5; }
 .comp-h-mid   { border-left: 3px solid #0ea5e9; }
@@ -3050,7 +3117,7 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   margin-bottom: 10px;
 }
-.comp-h-label { font-size: 13px; font-weight: 700; flex: 1; }
+.comp-h-label { font-size: 13px; font-weight: 700; flex: 1; min-width: 0; white-space: nowrap; }
 .comp-h-target {
   display: flex; align-items: baseline; gap: 8px;
   background: var(--bg-soft); border-radius: 8px;
@@ -3076,36 +3143,57 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 }
 .comp-h-risks li { margin: 3px 0; }
 
-/* --- Multi-strategy list per horizon (≥3 strategies) --- */
+/* --- Multi-strategy list per horizon (rev 6 — fix per-char wrap on narrow cards) ---
+   Old layout: [rank][name][match-chip] all flexed inline → narrow cards
+   broke "区间震荡套利 (Range Trading)" into one CJK char per line.
+   New layout: badges on their own row (rank + match-chip), then NAME on a
+   FULL-WIDTH row of its own. Thesis + execution follow.
+*/
 .comp-h-strat-list {
   list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column; gap: 8px;
 }
 .comp-h-strat-item {
   background: var(--bg-soft, rgba(0,0,0,0.025)); border-radius: 8px;
-  padding: 8px 10px; border: 1px solid var(--border);
+  padding: 10px 12px; border: 1px solid var(--border);
 }
 .comp-h-strat-head {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  margin-bottom: 4px;
+  display: flex; flex-direction: column; gap: 6px;
+  margin-bottom: 6px;
+}
+.comp-h-strat-badges {
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap;
 }
 .comp-h-strat-rank {
   font-size: 10px; font-weight: 700; color: var(--text-muted);
   background: var(--bg); border: 1px solid var(--border);
-  border-radius: 4px; padding: 1px 5px; flex-shrink: 0;
+  border-radius: 4px; padding: 1px 6px; flex-shrink: 0;
+  font-feature-settings: "tnum" 1;
 }
 .comp-h-strat-name {
-  font-size: 12px; font-weight: 700; flex: 1; min-width: 0;
+  font-size: 13px; font-weight: 700; line-height: 1.4;
+  color: var(--text);
+  word-break: normal;
+  overflow-wrap: anywhere;     /* break long unbroken runs cleanly */
 }
 .comp-h-strat-thesis {
-  margin: 4px 0; font-size: 11.5px; line-height: 1.55;
+  margin: 4px 0 6px; font-size: 11.5px; line-height: 1.6;
   color: var(--text-muted);
 }
 .comp-h-strat-exec {
-  margin: 4px 0 0; font-size: 12px; line-height: 1.55;
+  margin: 6px 0 0; font-size: 12px; line-height: 1.6;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
 }
 .comp-h-strat-exec-label {
-  font-weight: 700; color: var(--accent); margin-right: 4px;
+  display: inline-block;
+  font-weight: 700; color: var(--accent);
+  margin-right: 6px; padding: 1px 6px;
+  background: rgba(124, 92, 255, 0.08);
+  border-radius: 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
 }
 .comp-match-chip {
   display: inline-block; padding: 1px 6px; border-radius: 999px;
@@ -3700,37 +3788,9 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   box-shadow: 0 1px 0 rgba(0,0,0,0.02);
 }
 .comp-h-strat-item + .comp-h-strat-item { margin-top: 0; }
-.comp-h-strat-head { margin-bottom: 6px; gap: 7px; }
-.comp-h-strat-rank {
-  font-size: 10.5px;
-  background: var(--bg-soft);
-  border-color: transparent;
-  font-feature-settings: "tnum" 1;
-  letter-spacing: 0.02em;
-}
-.comp-h-strat-name {
-  font-size: 12.5px;
-  letter-spacing: 0.005em;
-}
-.comp-h-strat-thesis {
-  font-size: 11.5px; line-height: 1.6;
-  margin: 5px 0 6px;
-}
-.comp-h-strat-exec {
-  font-size: 12px; line-height: 1.6;
-  padding-top: 6px;
-  border-top: 1px dashed var(--border);
-  margin: 6px 0 0;
-}
-.comp-h-strat-exec-label {
-  display: inline-block;
-  padding: 0 6px; margin-right: 4px;
-  background: rgba(124,92,255,0.12);
-  border-radius: 4px;
-  color: var(--accent);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-}
+/* (Strategy-item internals — head/badges/rank/name/thesis/exec — are
+   defined in the rev-6 block above; we don't override them here so the
+   column-stacked head layout stays consistent.) */
 .comp-h-risks { border-top-style: solid; border-top-color: rgba(192,57,43,0.18); }
 .comp-h-risks ul { padding-left: 20px; }
 .comp-h-risks li { line-height: 1.65; }

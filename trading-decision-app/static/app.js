@@ -3787,28 +3787,37 @@ const Watchlist = {
       : (q.volume != null && q.price != null ? q.volume * q.price : q.volume);
     const turnoverUnit = (q.source === "binance" || q.source === "coingecko") ? "美元" : "美元";
 
+    // Compact horizontal stats strip. Each "stat" is a label-above-value
+    // pair that takes only the width it needs — no more 8-cell grid with
+    // a row of half-empty cards. Source badge moves to the right edge.
     const stats = `
       <div class="wl-stats">
-        <div><div class="wl-stat-label">开盘</div><div class="wl-stat-value">${fmt(q.open)}</div></div>
-        <div><div class="wl-stat-label">最高</div><div class="wl-stat-value">${fmt(q.high)}</div></div>
-        <div><div class="wl-stat-label">最低</div><div class="wl-stat-value">${fmt(q.low)}</div></div>
-        <div><div class="wl-stat-label">昨收</div><div class="wl-stat-value">${fmt(q.prev_close)}</div></div>
-        <div><div class="wl-stat-label">成交额</div><div class="wl-stat-value">${this.formatChineseAmount(turnoverUsd, turnoverUnit)}</div></div>
-        <div><div class="wl-stat-label">市值</div><div class="wl-stat-value">${this.formatChineseAmount(capUsd, "美元")}</div></div>
-        <div><div class="wl-stat-label">P/E</div><div class="wl-stat-value">${fmt(q.pe_ratio, 1)}</div></div>
-        <div><div class="wl-stat-label">数据源</div><div class="wl-stat-value" style="font-size:11px;">${escapeHtml(q.source || "—")}</div></div>
+        <div class="wl-stat"><div class="wl-stat-label">开盘</div><div class="wl-stat-value">${fmt(q.open)}</div></div>
+        <div class="wl-stat"><div class="wl-stat-label">最高</div><div class="wl-stat-value">${fmt(q.high)}</div></div>
+        <div class="wl-stat"><div class="wl-stat-label">最低</div><div class="wl-stat-value">${fmt(q.low)}</div></div>
+        <div class="wl-stat"><div class="wl-stat-label">昨收</div><div class="wl-stat-value">${fmt(q.prev_close)}</div></div>
+        <div class="wl-stat"><div class="wl-stat-label">成交额</div><div class="wl-stat-value">${this.formatChineseAmount(turnoverUsd, turnoverUnit)}</div></div>
+        <div class="wl-stat"><div class="wl-stat-label">市值</div><div class="wl-stat-value">${this.formatChineseAmount(capUsd, "美元")}</div></div>
+        <div class="wl-stat"><div class="wl-stat-label">P/E</div><div class="wl-stat-value">${fmt(q.pe_ratio, 1)}</div></div>
+        ${q.source ? `<div class="wl-stat-source" title="行情数据源">${escapeHtml(q.source)}</div>` : ""}
       </div>`;
 
+    // Header: ticker + name on the left, price block in the middle,
+    // action buttons aligned to the right. Single-line, sticky-friendly.
     const head = `
       <div class="wl-main-head">
-        <span class="wl-main-ticker">${escapeHtml(entry.ticker)}</span>
-        ${nameSub ? `<span class="wl-main-name">${escapeHtml(nameSub)}</span>` : ""}
-        <span class="wl-main-price">${fmt(q.price)}</span>
-        <span class="wl-main-pct ${dirCls}">${dirArrow} ${fmtPct(pct)}</span>
-        <span class="wl-main-actions">
+        <div class="wl-main-head-id">
+          <span class="wl-main-ticker">${escapeHtml(entry.ticker)}</span>
+          ${nameSub ? `<span class="wl-main-name">${escapeHtml(nameSub)}</span>` : ""}
+        </div>
+        <div class="wl-main-head-price">
+          <span class="wl-main-price">${fmt(q.price)}</span>
+          <span class="wl-main-pct ${dirCls}">${dirArrow} ${fmtPct(pct)}</span>
+        </div>
+        <div class="wl-main-actions">
           <button class="btn primary small" data-main-act="run">▶ 启动新决策</button>
           <button class="btn secondary small" data-main-act="del">🗑 移除</button>
-        </span>
+        </div>
       </div>`;
 
     const compHTML = `<div class="wl-comp-mount" id="wl-comp-mount-${escapeHtml(entry.id)}"></div>`;
