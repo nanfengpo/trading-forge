@@ -3310,4 +3310,66 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   font-size: 13px; line-height: 1.5; color: var(--text); margin: 4px 0 2px;
 }
 
+/* =========================================================================
+   Comp report — global in-flight indicator (concurrent generation surfacing)
+   ========================================================================= */
+.wl-comp-global-indicator {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: linear-gradient(90deg, rgba(124,92,255,0.10), rgba(255,138,76,0.06));
+  border: 1px solid rgba(124,92,255,0.30);
+  color: var(--text);
+  padding: 8px 14px; border-radius: 8px; margin: 6px 0 12px;
+  font-size: 13px;
+}
+.wl-comp-global-indicator strong { color: var(--accent); font-weight: 700; }
+.wl-comp-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(124,92,255,0.30);
+  border-top-color: var(--accent);
+  animation: wl-comp-spin 0.8s linear infinite;
+}
+@keyframes wl-comp-spin { to { transform: rotate(360deg); } }
+.wl-comp-pill {
+  font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  background: var(--bg-soft); color: var(--text);
+  border: 1px solid var(--border); font-weight: 600;
+  font-feature-settings: "tnum" 1;
+}
+
+/* =========================================================================
+   Comp report — collapsible history sidebar
+   ========================================================================= */
+.comp-body-grid.collapsed {
+  grid-template-columns: 36px 1fr;
+}
+.comp-sidebar-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.comp-sidebar-head .comp-sidebar-count { margin-left: auto; }
+.comp-sidebar-toggle {
+  background: transparent; border: 1px solid var(--border); cursor: pointer;
+  color: var(--text-muted); font-size: 11px;
+  padding: 2px 6px; border-radius: 4px; line-height: 1;
+  transition: background 0.12s, color 0.12s;
+}
+.comp-sidebar-toggle:hover { background: var(--bg); color: var(--text); }
+.comp-sidebar.collapsed {
+  padding: 4px 2px; max-height: 720px;
+  display: flex; align-items: flex-start; justify-content: center;
+  background: var(--bg-soft);
+}
+.comp-sidebar-toggle.collapsed {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 4px;
+  width: 28px; height: auto;
+  font-size: 14px; line-height: 1.1;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.comp-sidebar-toggle-count {
+  font-size: 10px; padding: 1px 4px; border-radius: 6px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); font-weight: 700;
+  min-width: 16px; text-align: center;
+}
+
 

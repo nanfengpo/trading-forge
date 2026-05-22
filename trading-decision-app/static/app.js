@@ -153,7 +153,36 @@ const Router = {
     for (const [tab, p] of Object.entries(this.routes)) {
       if (p === clean) return tab;
     }
+    // Sub-routes under /watchlist (e.g. /watchlist/NVDA, /watchlist/NVDA/r/<id>)
+    if (/^\/watchlist(\/|$)/.test(clean)) return "watchlist";
     return null;
+  },
+
+  /** Parse `/watchlist/NVDA/r/abc-uuid` → { ticker: "NVDA", reportId: "abc-uuid" }.
+   *  Returns null on the bare `/watchlist` path. */
+  parseWatchlistPath(path) {
+    const m = (path || "").match(/^\/watchlist\/([^/]+)(?:\/r\/([^/]+))?\/?$/);
+    if (!m) return null;
+    return { ticker: decodeURIComponent(m[1]).toUpperCase(), reportId: m[2] ? decodeURIComponent(m[2]) : null };
+  },
+
+  /** Build a watchlist URL. ticker / reportId are optional. */
+  watchlistPath(ticker, reportId) {
+    let p = "/watchlist";
+    if (ticker) p += "/" + encodeURIComponent(ticker);
+    if (ticker && reportId) p += "/r/" + encodeURIComponent(reportId);
+    return p;
+  },
+
+  /** Push (or replace) a watchlist sub-route — used by Watchlist row click +
+   *  ComprehensiveReport.selectVersion. */
+  goWatchlist(ticker, reportId, { push = true, replace = false } = {}) {
+    const path = this.watchlistPath(ticker, reportId);
+    if (push && location.pathname !== path) {
+      if (replace) history.replaceState({ tab: "watchlist", ticker, reportId }, "", path);
+      else         history.pushState({ tab: "watchlist", ticker, reportId }, "", path);
+    }
+    document.title = this._titleFor("watchlist", ticker, reportId);
   },
 
   _pathFromTab(tab) {
@@ -179,7 +208,7 @@ const Router = {
     window.scrollTo({ top: 0, behavior: "instant" in document.documentElement.style ? "instant" : "auto" });
   },
 
-  _titleFor(tab) {
+  _titleFor(tab, ticker, reportId) {
     const labels = {
       home: "智策 TradingForge · 多智能体投研工作台",
       watchlist: "自选 · 智策 TradingForge",
@@ -190,7 +219,22 @@ const Router = {
       favorites: "我的收藏 · 智策 TradingForge",
       profile: "个人中心 · 智策 TradingForge",
     };
+    if (tab === "watchlist" && ticker) {
+      return reportId
+        ? `${ticker} · 综合报告 · 自选 · 智策`
+        : `${ticker} · 自选 · 智策`;
+    }
     return labels[tab] || labels.home;
+  },
+
+  /** Apply a watchlist deep-link (ticker / reportId) AFTER `go("watchlist")`
+   *  has switched panels. The Watchlist controller listens for the
+   *  `wl-route-changed` event. */
+  _emitWatchlistRoute(ticker, reportId) {
+    // Update title so deep-link landings show "NVDA · 自选 · 智策" instead
+    // of the bare "自选 · 智策".
+    if (ticker) document.title = this._titleFor("watchlist", ticker, reportId);
+    window.dispatchEvent(new CustomEvent("wl-route-changed", { detail: { ticker, reportId } }));
   },
 
   init() {
@@ -209,12 +253,23 @@ const Router = {
     window.addEventListener("popstate", () => {
       const tab = this._tabFromPath(location.pathname) || "home";
       this.go(tab, { push: false });
+      if (tab === "watchlist") {
+        const sub = this.parseWatchlistPath(location.pathname) || {};
+        this._emitWatchlistRoute(sub.ticker || null, sub.reportId || null);
+      }
     });
     // Initial paint — pick tab from URL.
     const initialTab = this._tabFromPath(location.pathname) || "home";
     this.go(initialTab, { push: false });
+    if (initialTab === "watchlist") {
+      const sub = this.parseWatchlistPath(location.pathname) || {};
+      // Defer until Watchlist.init() has registered its listener.
+      setTimeout(() => this._emitWatchlistRoute(sub.ticker || null, sub.reportId || null), 0);
+    }
   },
 };
+// Expose for cross-script callers (comprehensive.js).
+window.Router = Router;
 
 // Legacy alias kept so older call sites (initLibrary, etc.) keep working.
 function initTabs() { Router.init(); }
@@ -3113,6 +3168,35 @@ const Watchlist = {
         this._fetchQuotes();
       }
     }, 60000);
+
+    // Deep-link routing — Router fires `wl-route-changed` on initial paint
+    // and on browser back/forward. We honor it by selecting the matching
+    // ticker (and deferring the version selection to ComprehensiveReport).
+    window.addEventListener("wl-route-changed", (ev) => {
+      const detail = ev.detail || {};
+      this._applyRoute(detail.ticker, detail.reportId);
+    });
+  },
+
+  /** Apply a URL-derived route ({ticker, reportId}) to the current view. */
+  _applyRoute(ticker, reportId) {
+    if (!ticker) return;
+    const target = (ticker || "").toUpperCase();
+    const tryApply = () => {
+      const entry = (this.cache || []).find(e => (e.ticker || "").toUpperCase() === target);
+      if (!entry) return false;
+      this.selectedId = entry.id;
+      this.render();
+      // Defer version selection until comp-report state is ready.
+      if (reportId && window.ComprehensiveReport && window.ComprehensiveReport.selectVersion) {
+        setTimeout(() => window.ComprehensiveReport.selectVersion(target, reportId), 50);
+      }
+      return true;
+    };
+    if (tryApply()) return;
+    // Watchlist may not have loaded yet — wait one tick.
+    setTimeout(tryApply, 200);
+    setTimeout(tryApply, 800);
   },
 
   _toggleAddForm(show) {
@@ -3254,9 +3338,73 @@ const Watchlist = {
       const d = await r.json();
       (d.items || []).forEach(q => { this.quotes[q.ticker.toUpperCase()] = q; });
       if (this.updatedEl) this.updatedEl.textContent = "更新于 " + new Date().toLocaleTimeString();
-      this.render();
+      // Surgical update — NEVER call this.render() here. A full re-render
+      // rebuilds the comp-report mount, the latest-decision card, and the
+      // entire sidebar, causing visible jitter every 60s. Instead patch only
+      // the cells whose values change.
+      this._updateQuotesInPlace();
     } catch (e) {
       console.warn("watchlist quotes fetch failed", e);
+    }
+  },
+
+  /** Surgical price/pct/stats refresh — no innerHTML rebuilds, no comp-report
+   *  re-attach. Called from the 60s quote tick and from _fetchQuotes after the
+   *  manual refresh button. */
+  _updateQuotesInPlace() {
+    if (!this.listEl) return;
+    const fmt = (n, d=2) => (n == null || isNaN(n)) ? "—" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+    const fmtPct = (p) => (p == null || isNaN(p)) ? "—" : (p >= 0 ? "+" : "") + Number(p).toFixed(2) + "%";
+
+    // -- Sidebar rows -----------------------------------------------------
+    this.listEl.querySelectorAll(".watchlist-row").forEach(li => {
+      const t = (li.dataset.ticker || "").toUpperCase();
+      const q = this.quotes[t] || {};
+      const pct = q.change_pct;
+      const dirCls = pct == null ? "" : (pct >= 0 ? "up" : "down");
+      const priceEl = li.querySelector(".wl-side-price");
+      if (priceEl) priceEl.textContent = fmt(q.price);
+      const pctEl = li.querySelector(".wl-side-pct");
+      if (pctEl) {
+        pctEl.textContent = fmtPct(pct);
+        pctEl.classList.remove("up", "down");
+        if (dirCls) pctEl.classList.add(dirCls);
+      }
+    });
+
+    // -- Main pane (if a ticker is selected) -----------------------------
+    const entry = this.cache.find(e => e.id === this.selectedId);
+    if (!entry || !this.mainEl) return;
+    const q = this.quotes[entry.ticker.toUpperCase()] || {};
+    const pct = q.change_pct;
+    const dirCls = pct == null ? "" : (pct >= 0 ? "up" : "down");
+    const dirArrow = pct == null ? "" : (pct >= 0 ? "▲" : "▼");
+
+    const mainPriceEl = this.mainEl.querySelector(".wl-main-price");
+    if (mainPriceEl) mainPriceEl.textContent = fmt(q.price);
+    const mainPctEl = this.mainEl.querySelector(".wl-main-pct");
+    if (mainPctEl) {
+      mainPctEl.textContent = `${dirArrow} ${fmtPct(pct)}`;
+      mainPctEl.classList.remove("up", "down");
+      if (dirCls) mainPctEl.classList.add(dirCls);
+    }
+
+    // -- Stats grid -- order: 开盘 最高 最低 昨收 成交额 市值 P/E 数据源
+    const statEls = this.mainEl.querySelectorAll(".wl-stats .wl-stat-value");
+    if (statEls && statEls.length >= 8) {
+      const capRaw = q.market_cap;
+      const capUsd = (capRaw != null && q.source === "finnhub") ? capRaw * 1e6 : capRaw;
+      const turnoverUsd = q.turnover != null
+        ? q.turnover
+        : (q.volume != null && q.price != null ? q.volume * q.price : q.volume);
+      statEls[0].textContent = fmt(q.open);
+      statEls[1].textContent = fmt(q.high);
+      statEls[2].textContent = fmt(q.low);
+      statEls[3].textContent = fmt(q.prev_close);
+      statEls[4].textContent = this.formatChineseAmount(turnoverUsd, "美元");
+      statEls[5].textContent = this.formatChineseAmount(capUsd, "美元");
+      statEls[6].textContent = fmt(q.pe_ratio, 1);
+      statEls[7].textContent = q.source || "—";
     }
   },
 
@@ -3529,6 +3677,9 @@ const Watchlist = {
         const id = li.dataset.id;
         if (this.selectedId === id) return;
         this.selectedId = id;
+        // Push a deep-link URL so the user can bookmark / share / use the back
+        // button to navigate between recently-viewed tickers.
+        if (window.Router) window.Router.goWatchlist(li.dataset.ticker, null);
         this.render();
       });
     });

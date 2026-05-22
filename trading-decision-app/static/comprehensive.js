@@ -108,6 +108,53 @@
     return _state[k];
   }
 
+  // Sidebar collapsed-state preference, keyed by ticker. Stored as a flat
+  // map so the user can independently collapse different tickers' sidebars.
+  const _SIDEBAR_KEY = "tda:comp-sidebar-collapsed";
+  function _readSidebarPrefs() {
+    try { return JSON.parse(localStorage.getItem(_SIDEBAR_KEY) || "{}"); }
+    catch { return {}; }
+  }
+  function _writeSidebarPrefs(map) {
+    try { localStorage.setItem(_SIDEBAR_KEY, JSON.stringify(map || {})); }
+    catch (e) { console.warn("comp-sidebar prefs save failed", e); }
+  }
+  function _isSidebarCollapsed(ticker) {
+    return !!(_readSidebarPrefs()[(ticker || "").toUpperCase()]);
+  }
+
+  /** How many tickers currently have an in-flight generation. Used by the
+   *  global indicator that surfaces concurrent runs even when the user has
+   *  switched to a different ticker / tab. */
+  function _countInflight() {
+    let n = 0;
+    for (const k of Object.keys(_state)) {
+      const st = _state[k];
+      const generating = (st.history || []).some(h => h.status === "generating");
+      if (st.progressTimer || generating) n++;
+    }
+    return n;
+  }
+
+  /** Sync the global "N 个综合报告生成中" indicator above the watchlist sidebar. */
+  function _renderGlobalIndicator() {
+    const host = document.getElementById("wl-comp-global-indicator");
+    if (!host) return;
+    const n = _countInflight();
+    if (!n) { host.style.display = "none"; host.innerHTML = ""; return; }
+    host.style.display = "";
+    const inflightTickers = [];
+    for (const k of Object.keys(_state)) {
+      const st = _state[k];
+      const isGen = st.progressTimer || (st.history || []).some(h => h.status === "generating");
+      if (isGen) inflightTickers.push(k);
+    }
+    host.innerHTML = `
+      <span class="wl-comp-spinner" aria-hidden="true"></span>
+      <strong>${n}</strong> 个综合报告生成中：${inflightTickers.map(t => `<span class="wl-comp-pill">${t}</span>`).join(" ")}
+    `;
+  }
+
   // ---------------- main API --------------------------------------------
 
   const ComprehensiveReport = {
@@ -268,10 +315,28 @@
       return [];
     },
 
-    async selectVersion(ticker, versionId) {
+    async selectVersion(ticker, versionId, { pushUrl = true } = {}) {
       const tu = (ticker || "").toUpperCase();
       const st = _getState(tu);
       st.selectedId = versionId;
+      this._refreshIfVisible(tu);
+      // Push a deep-link URL so the user can share / bookmark this report.
+      // Skip when called from the route-applier itself (avoid loops).
+      if (pushUrl && window.Router && window.Router.goWatchlist) {
+        // Only update the URL while the user is actually viewing watchlist.
+        const onWl = document.getElementById("watchlist")?.classList.contains("active");
+        if (onWl) window.Router.goWatchlist(tu, versionId);
+      }
+    },
+
+    /** Toggle the history-sidebar collapsed state. Persists in localStorage so
+     *  the user's preference survives reloads. Per-ticker so different assets
+     *  can have different collapse states. */
+    toggleSidebar(ticker) {
+      const tu = (ticker || "").toUpperCase();
+      const map = _readSidebarPrefs();
+      map[tu] = !map[tu];
+      _writeSidebarPrefs(map);
       this._refreshIfVisible(tu);
     },
 
@@ -329,6 +394,8 @@
           m.querySelectorAll(".comp-elapsed").forEach(el => { el.textContent = `${st.elapsed}s`; });
         });
       }, 1000);
+      // Surface the in-flight run in the global indicator above the sidebar.
+      _renderGlobalIndicator();
     },
 
     _stopProgressTimer(ticker) {
@@ -338,6 +405,7 @@
         clearInterval(st.progressTimer);
         st.progressTimer = null;
       }
+      _renderGlobalIndicator();
     },
 
     async _finishWithError(ticker, placeholderId, msg) {
@@ -497,10 +565,11 @@
 
       // Sidebar (history) + main pane two-column layout. Sidebar always present
       // when the user has at least 1 version, so they can pin / delete even an
-      // in-flight or errored one.
+      // in-flight or errored one. Collapsed state persists per-ticker.
+      const collapsed = _isSidebarCollapsed(ticker);
       const body = hasHistory
-        ? `<div class="comp-body-grid">
-             ${this._sidebarHTML(ticker, history, row?.id)}
+        ? `<div class="comp-body-grid${collapsed ? " collapsed" : ""}">
+             ${this._sidebarHTML(ticker, history, row?.id, collapsed)}
              <div class="comp-main">${mainBody}</div>
            </div>`
         : `<div class="comp-main">${mainBody}</div>`;
@@ -537,7 +606,7 @@
         </div>`;
     },
 
-    _sidebarHTML(ticker, history, selectedId) {
+    _sidebarHTML(ticker, history, selectedId, collapsed = false) {
       const items = history.map(h => {
         const sel = h.id === selectedId ? " selected" : "";
         const pin = h.is_pinned ? "★" : "";
@@ -565,9 +634,21 @@
             </div>
           </li>`;
       }).join("");
+      // Collapsed state shows only the toggle bar (no body); the toggle button
+      // is always rendered so the user can re-expand without leaving the page.
+      if (collapsed) {
+        return `
+          <aside class="comp-sidebar collapsed" title="展开历史版本">
+            <button class="comp-sidebar-toggle collapsed" data-comp-sidebar-toggle="${esc(ticker)}" title="展开历史版本">📜<span class="comp-sidebar-toggle-count">${history.length}</span></button>
+          </aside>`;
+      }
       return `
         <aside class="comp-sidebar">
-          <div class="comp-sidebar-head">📜 历史版本 <span class="comp-sidebar-count">${history.length}</span></div>
+          <div class="comp-sidebar-head">
+            <span>📜 历史版本</span>
+            <span class="comp-sidebar-count">${history.length}</span>
+            <button class="comp-sidebar-toggle" data-comp-sidebar-toggle="${esc(ticker)}" title="折叠侧边栏">◀</button>
+          </div>
           <ul class="comp-sidebar-list">${items}</ul>
         </aside>`;
     },
@@ -779,8 +860,18 @@
           await this.deleteVersion(ticker, b.dataset.delId);
         });
       });
+      // Sidebar collapse toggle.
+      container.querySelectorAll("[data-comp-sidebar-toggle]").forEach(b => {
+        b.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this.toggleSidebar(b.dataset.compSidebarToggle);
+        });
+      });
     },
   };
 
   window.ComprehensiveReport = ComprehensiveReport;
+  // Expose for unit-test / debug hooks.
+  window._compReportState = _state;
+  window._renderGlobalIndicator = _renderGlobalIndicator;
 })();

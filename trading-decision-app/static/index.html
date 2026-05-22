@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TradingForge · 智策 · 多智能体投研工作台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/styles.css?v=20260525e">
+<link rel="stylesheet" href="/styles.css?v=20260526b">
 </head>
 <body>
 
@@ -335,6 +335,11 @@
       <button type="button" class="btn primary small" id="watchlist-add-submit">添加</button>
       <button type="button" class="btn secondary small" id="watchlist-add-cancel">取消</button>
     </div>
+
+    <!-- Global indicator: surfaces all in-flight comp-report generations so
+         the user can see them even when viewing a different ticker / tab.
+         Filled by comprehensive.js _renderGlobalIndicator(). -->
+    <div class="wl-comp-global-indicator" id="wl-comp-global-indicator" style="display:none;"></div>
 
     <!-- Group chips: built-in markets + custom groups -->
     <div class="watchlist-groups" id="watchlist-groups"></div>
@@ -1061,10 +1066,10 @@
   }
 </script>
 <script src="/auth.js"></script>
-<script src="/comprehensive.js?v=20260525e"></script>
+<script src="/comprehensive.js?v=20260526b"></script>
 <script src="/strategies.js"></script>
-<script src="/app.js?v=20260525e"></script>
+<script src="/app.js?v=20260526b"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/fundamentals.js?v=20260525e"></script>
+<script src="/fundamentals.js?v=20260526b"></script>
 </body>
 </html>
