@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TradingForge · 智策 · 多智能体投研工作台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/styles.css?v=20260529a">
+<link rel="stylesheet" href="/styles.css?v=20260529b">
 </head>
 <body>
 
@@ -302,10 +302,8 @@
       </div>
       <div style="display:flex; gap:6px; align-items:center;">
         <span class="muted" style="font-size:12px;" id="watchlist-updated"></span>
-        <button class="btn secondary small" id="watchlist-collapse-btn" title="收起自选列表，给详情更多空间" aria-expanded="true">◀ 收起列表</button>
         <button class="btn secondary small" id="watchlist-import-history" title="把历史决策里出现过的标的批量加入自选">📥 从历史导入</button>
         <button class="btn secondary small" id="watchlist-refresh">↻ 刷新</button>
-        <button class="btn primary small" id="watchlist-add-btn">+ 添加自选</button>
       </div>
     </header>
 
@@ -358,9 +356,17 @@
                         right = main detail panel for selected asset -->
     <div class="watchlist-shell">
       <aside class="watchlist-sidebar">
+        <!-- Toolbar sits directly above the ticker list: 收起列表 + 添加自选. -->
+        <div class="watchlist-sidebar-toolbar">
+          <button class="btn secondary small" id="watchlist-collapse-btn" title="收起自选列表，给详情更多空间" aria-expanded="true">◀ 收起列表</button>
+          <button class="btn primary small" id="watchlist-add-btn">+ 添加自选</button>
+        </div>
         <div class="watchlist-empty" id="watchlist-empty"></div>
         <ul class="watchlist-list" id="watchlist-list"></ul>
       </aside>
+      <!-- Slim rail shown only while collapsed so the expand control stays
+           reachable after the sidebar (and its toolbar) is hidden. -->
+      <button class="watchlist-expand-rail" id="watchlist-expand-btn" title="展开自选列表" aria-label="展开自选列表" aria-expanded="false">▶</button>
       <main class="watchlist-main" id="watchlist-main">
         <div class="watchlist-main-empty" id="watchlist-main-empty">
           ← 选择左侧任意标的查看实时行情和最新决策
@@ -1088,10 +1094,10 @@
   }
 </script>
 <script src="/auth.js"></script>
-<script src="/comprehensive.js?v=20260529a"></script>
+<script src="/comprehensive.js?v=20260529b"></script>
 <script src="/strategies.js"></script>
-<script src="/app.js?v=20260529a"></script>
+<script src="/app.js?v=20260529b"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/fundamentals.js?v=20260529a"></script>
+<script src="/fundamentals.js?v=20260529b"></script>
 </body>
 </html>

@@ -1361,10 +1361,32 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   display: grid; grid-template-columns: 272px 1fr; gap: 16px;
   align-items: start;
 }
-/* Collapsed sidebar: the detail pane takes the full page width. Toggled by
-   the「收起列表」button in the watchlist header (state persisted). */
-.watchlist-shell.sidebar-hidden { grid-template-columns: 1fr; }
+/* Toolbar directly above the ticker list — 收起列表 + 添加自选. Sticky so it
+   stays pinned while the list scrolls. */
+.watchlist-sidebar-toolbar {
+  display: flex; gap: 6px; align-items: center;
+  padding: 8px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 1; background: var(--bg-card);
+}
+.watchlist-sidebar-toolbar .btn { flex: 1; white-space: nowrap; }
+
+/* Collapsed: the sidebar (incl. its toolbar) hides and a slim rail with a ▶
+   button takes its place, so the expand control stays reachable while the
+   detail pane gets nearly the full width. State persisted. */
+.watchlist-shell.sidebar-hidden { grid-template-columns: 36px 1fr; }
 .watchlist-shell.sidebar-hidden > .watchlist-sidebar { display: none; }
+.watchlist-expand-rail { display: none; }
+.watchlist-shell.sidebar-hidden > .watchlist-expand-rail {
+  display: block; width: 100%;
+  position: sticky; top: 12px; align-self: start;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; cursor: pointer; color: var(--text-muted);
+  font-size: 14px; line-height: 1; padding: 12px 0;
+  transition: background 0.12s, color 0.12s;
+}
+.watchlist-shell.sidebar-hidden > .watchlist-expand-rail:hover {
+  background: var(--bg-soft); color: var(--text);
+}
 .watchlist-sidebar {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 12px; overflow: hidden;
@@ -1568,6 +1590,9 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 }
 @media (max-width: 900px) {
   .watchlist-shell { grid-template-columns: 1fr; }
+  /* Collapsed on mobile: rail stacks as a full-width bar above the detail. */
+  .watchlist-shell.sidebar-hidden { grid-template-columns: 1fr; }
+  .watchlist-shell.sidebar-hidden > .watchlist-expand-rail { position: static; }
   .watchlist-sidebar { position: relative; top: auto; max-height: 320px; }
   .wl-main-actions { margin-left: 0; }
   .wl-stats { font-size: 12px; gap: 4px 14px; }

@@ -3159,13 +3159,14 @@ const Watchlist = {
     document.getElementById("watchlist-import-history").addEventListener("click", () => this.importFromHistory());
 
     // Collapse / expand the whole watchlist sidebar so the selected ticker's
-    // detail pane can use the full page width.
+    // detail pane can use the full page width. The 收起 button lives in the
+    // sidebar toolbar (hidden when collapsed); a slim rail button re-expands.
     this.shellEl = document.querySelector(".watchlist-shell");
     this.collapseBtn = document.getElementById("watchlist-collapse-btn");
-    if (this.collapseBtn) {
-      this.collapseBtn.addEventListener("click", () => this.toggleSidebar());
-      this._applySidebarPref();
-    }
+    this.expandBtn = document.getElementById("watchlist-expand-btn");
+    if (this.collapseBtn) this.collapseBtn.addEventListener("click", () => this.toggleSidebar(true));
+    if (this.expandBtn)   this.expandBtn.addEventListener("click", () => this.toggleSidebar(false));
+    this._applySidebarPref();
 
     if (window.Auth) window.Auth.onChange(() => this.refresh(true));
     this.refresh(true);
@@ -3213,10 +3214,11 @@ const Watchlist = {
     catch { return false; }
   },
   _paintCollapseBtn(hidden) {
-    if (!this.collapseBtn) return;
-    this.collapseBtn.textContent = hidden ? "▶ 展开列表" : "◀ 收起列表";
-    this.collapseBtn.title = hidden ? "展开自选列表" : "收起自选列表，给详情更多空间";
-    this.collapseBtn.setAttribute("aria-expanded", String(!hidden));
+    // Both controls advertise the same expanded/collapsed state for a11y; the
+    // 收起 button is static text (CSS hides it when collapsed) and the rail
+    // button is the static ▶ re-expand affordance.
+    if (this.collapseBtn) this.collapseBtn.setAttribute("aria-expanded", String(!hidden));
+    if (this.expandBtn)   this.expandBtn.setAttribute("aria-expanded", String(!hidden));
   },
   _applySidebarPref() {
     const hidden = this._sidebarHidden();
