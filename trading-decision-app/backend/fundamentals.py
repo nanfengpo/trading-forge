@@ -84,20 +84,18 @@ SECTORS: Dict[str, Dict[str, Any]] = {
         "weights": {
             # 估值 Valuation (23) — pure price multiples only
             "pe": 3, "pe_fwd": 8, "ps": 5, "pb": 0, "ev_ebitda": 7,
-            # 盈利质量 Profitability (30) — ROIC + GM = QMJ + Novy-Marx quality axes
-            "eps": 0, "roe": 4, "roic": 14, "gross_margin": 8, "op_margin": 4,
-            # 成长 Growth (26) — the AI thesis; rev + earnings momentum
-            "rev_growth": 14, "eps_growth": 12,
+            # 盈利质量 Profitability (31) — ROIC + GM = QMJ + Novy-Marx quality axes
+            "eps": 0, "roe": 4, "roic": 15, "gross_margin": 8, "op_margin": 4,
+            # 成长 Growth (27) — the AI thesis; rev + earnings momentum
+            "rev_growth": 15, "eps_growth": 12,
             # 现金流 Cash flow (9) — owner-earnings reality check vs GPU resale
             "fcf_yield": 9,
             # 财务健康 Health (4) — cohort isn't uniformly net-cash (CLS/SMCI/VRT)
             "de": 3, "interest_cov": 1, "current_ratio": 0,
-            # 股东回报 Shareholder (2)
-            "div_yield": 0, "buyback_yield": 2,
             # 风险 Risk (6) — late-cycle high-beta penalty
             "beta": 6,
         },
-        "weight_rationale": "成长 × 资本效率 × 现金流：ROIC 14 + 毛利 8 + 营收 14 + 利润 12 共占 48 — 区分真复利与卖 GPU 转售。PEG 已剔除（其本身=PE÷增速，与独立的成长维度重复计数）。",
+        "weight_rationale": "成长 × 资本效率 × 现金流：ROIC 15 + 毛利 8 + 营收 15 + 利润 12 共占 50 — 区分真复利与卖 GPU 转售。已删除股东回报维度（权重按比例并入其余维度）；PEG 亦不计分（其本身=PE÷增速，与成长维度重复）。",
     },
     "energy": {
         "id": "energy",
@@ -118,22 +116,20 @@ SECTORS: Dict[str, Dict[str, Any]] = {
         # low (the classic "cheap-at-the-top" cyclical trap). Growth deliberately
         # tiny — production growth at peak is value-destructive.
         "weights": {
-            # 估值 Valuation (30) — EV/EBITDA dominates (debt-adjusted across MLP/E&P/utility)
-            "pe": 3, "pe_fwd": 5, "ps": 2, "pb": 6, "ev_ebitda": 14,
-            # 盈利质量 Profitability (22) — ROIC separates capital-allocation winners
-            "eps": 0, "roe": 5, "roic": 11, "gross_margin": 2, "op_margin": 4,
+            # 估值 Valuation (33) — EV/EBITDA dominates (debt-adjusted across MLP/E&P/utility)
+            "pe": 3, "pe_fwd": 6, "ps": 2, "pb": 7, "ev_ebitda": 15,
+            # 盈利质量 Profitability (24) — ROIC separates capital-allocation winners
+            "eps": 0, "roe": 6, "roic": 12, "gross_margin": 2, "op_margin": 4,
             # 成长 Growth (8) — production growth at peak is value-destructive
             "rev_growth": 4, "eps_growth": 4,
-            # 现金流 Cash flow (15) — post-2021 shareholder-return thesis lives here
-            "fcf_yield": 15,
-            # 财务健康 Health (12) — 2014-16 + 2020 taught us capital structure = survival
-            "de": 6, "interest_cov": 4, "current_ratio": 2,
-            # 股东回报 Shareholder (8) — energy is a yield sector post-2021
-            "div_yield": 5, "buyback_yield": 3,
-            # 风险 Risk (5) — moderate; commodity beta is partly already in EV/EBITDA
-            "beta": 5,
+            # 现金流 Cash flow (16) — the cash that funds the post-2021 return thesis
+            "fcf_yield": 16,
+            # 财务健康 Health (13) — 2014-16 + 2020 taught us capital structure = survival
+            "de": 7, "interest_cov": 4, "current_ratio": 2,
+            # 风险 Risk (6) — moderate; commodity beta is partly already in EV/EBITDA
+            "beta": 6,
         },
-        "weight_rationale": "现金 × 资本结构：EV/EBITDA 14 + FCF 收益率 15 + ROIC 11 共占 40 — post-2021 股东回报 thesis；财务健康 12 + 股息回购 8 防穿越油价低谷。PEG 已剔除。",
+        "weight_rationale": "现金 × 资本结构：EV/EBITDA 15 + FCF 收益率 16 + ROIC 12 共占 43；财务健康 13 防穿越油价低谷。已删除股东回报维度（权重按比例并入，现金流/FCF 承接了原股息回购的意义）；PEG 不计分。",
     },
     "materials": {
         "id": "materials",
@@ -155,22 +151,20 @@ SECTORS: Dict[str, Dict[str, Any]] = {
         # LIN/SHW quality compounders from FCX/AA pure cyclicals. PEG removed
         # (double-counted growth — especially toxic in a peak-cycle cohort).
         "weights": {
-            # 估值 Valuation (32) — EV/EBITDA + P/B are the cyclical comp standard
-            "pe": 3, "pe_fwd": 4, "ps": 3, "pb": 8, "ev_ebitda": 14,
-            # 盈利质量 Profitability (24) — ROIC separates specialty from commodity
-            "eps": 0, "roe": 6, "roic": 10, "gross_margin": 4, "op_margin": 4,
+            # 估值 Valuation (34) — EV/EBITDA + P/B are the cyclical comp standard
+            "pe": 3, "pe_fwd": 4, "ps": 3, "pb": 9, "ev_ebitda": 15,
+            # 盈利质量 Profitability (26) — ROIC separates specialty from commodity
+            "eps": 0, "roe": 7, "roic": 11, "gross_margin": 4, "op_margin": 4,
             # 成长 Growth (8) — EPS-growth-at-top is a contra-indicator
             "rev_growth": 4, "eps_growth": 4,
-            # 现金流 Cash flow (12) — through-cycle FCF discipline
-            "fcf_yield": 12,
+            # 现金流 Cash flow (13) — through-cycle FCF discipline
+            "fcf_yield": 13,
             # 财务健康 Health (11) — survive the down-cycle
             "de": 5, "interest_cov": 4, "current_ratio": 2,
-            # 股东回报 Shareholder (6)
-            "div_yield": 4, "buyback_yield": 2,
-            # 风险 Risk (7)
-            "beta": 7,
+            # 风险 Risk (8)
+            "beta": 8,
         },
-        "weight_rationale": "周期股反思：成长仅 8 分（周期顶部 EPS 是反向指标）；EV/EBITDA 14 + P/B 8 + ROIC 10 + FCF 12 才是穿越周期底部的真实信号。PEG 已剔除。",
+        "weight_rationale": "周期股反思：成长仅 8 分（周期顶部 EPS 是反向指标）；EV/EBITDA 15 + P/B 9 + ROIC 11 + FCF 13 才是穿越周期底部的真实信号。已删除股东回报维度（权重按比例并入）；PEG 不计分。",
     },
     "financial": {
         "id": "financial",
@@ -192,22 +186,20 @@ SECTORS: Dict[str, Dict[str, Any]] = {
         # errors — deposits aren't debt, ops/financing inseparable). Beta high
         # (2023 SVB lesson: bank-beta-to-credit-cycle is fundamental).
         "weights": {
-            # 估值 Valuation (30) — P/B is THE bank metric
-            "pe": 6, "pe_fwd": 6, "ps": 0, "pb": 18, "ev_ebitda": 0,
-            # 盈利质量 Profitability (26) — ROE × P/B is the Gordon-growth-via-RIM identity
-            "eps": 0, "roe": 18, "roic": 4, "gross_margin": 0, "op_margin": 4,
-            # 成长 Growth (10)
-            "rev_growth": 4, "eps_growth": 6,
-            # 现金流 Cash flow (4) — banks have no real FCF concept; minimal weight
-            "fcf_yield": 4,
-            # 财务健康 Health (5) — most metrics are category errors; only D/E retained
-            "de": 5, "interest_cov": 0, "current_ratio": 0,
-            # 股东回报 Shareholder (17) — capital return is half of total return
-            "div_yield": 9, "buyback_yield": 8,
-            # 风险 Risk (8) — 2023 SVB blowup: bank-beta-to-credit-cycle is fundamental
-            "beta": 8,
+            # 估值 Valuation (36) — P/B is THE bank metric
+            "pe": 7, "pe_fwd": 7, "ps": 0, "pb": 22, "ev_ebitda": 0,
+            # 盈利质量 Profitability (32) — ROE × P/B is the Gordon-growth-via-RIM identity
+            "eps": 0, "roe": 22, "roic": 5, "gross_margin": 0, "op_margin": 5,
+            # 成长 Growth (12)
+            "rev_growth": 5, "eps_growth": 7,
+            # 现金流 Cash flow (5) — banks have no real FCF concept; minimal weight
+            "fcf_yield": 5,
+            # 财务健康 Health (6) — most metrics are category errors; only D/E retained
+            "de": 6, "interest_cov": 0, "current_ratio": 0,
+            # 风险 Risk (9) — 2023 SVB blowup: bank-beta-to-credit-cycle is fundamental
+            "beta": 9,
         },
-        "weight_rationale": "P/B × ROE 双锚 (Penman RIM 恒等式)：P/B 18 + ROE 18 共占 36 — 银行估值的代数核心；股息+回购 17 + Beta 8 防 2023 SVB 类型尾部。PEG 已剔除。",
+        "weight_rationale": "P/B × ROE 双锚 (Penman RIM 恒等式)：P/B 22 + ROE 22 共占 44 — 银行估值的代数核心；Beta 9 防 2023 SVB 类型尾部。已删除股东回报维度（原占 17，按比例并入 P/B×ROE 双锚）；PEG 不计分。",
     },
     "biotech": {
         "id": "biotech",
@@ -228,22 +220,20 @@ SECTORS: Dict[str, Dict[str, Any]] = {
         # PEG removed (meaningless for pre-revenue + double-counts growth);
         # its weight moved into P/S, EV/EBITDA and the rev-growth ramp signal.
         "weights": {
-            # 估值 Valuation (27)
-            "pe": 3, "pe_fwd": 5, "ps": 8, "pb": 2, "ev_ebitda": 9,
-            # 盈利质量 Profitability (24) — gross margin is the branded-drug moat
-            "eps": 0, "roe": 4, "roic": 6, "gross_margin": 10, "op_margin": 4,
-            # 成长 Growth (18) — ramp validates clinical→commercial conversion
-            "rev_growth": 11, "eps_growth": 7,
+            # 估值 Valuation (29)
+            "pe": 3, "pe_fwd": 5, "ps": 9, "pb": 2, "ev_ebitda": 10,
+            # 盈利质量 Profitability (25) — gross margin is the branded-drug moat
+            "eps": 0, "roe": 4, "roic": 6, "gross_margin": 11, "op_margin": 4,
+            # 成长 Growth (19) — ramp validates clinical→commercial conversion
+            "rev_growth": 12, "eps_growth": 7,
             # 现金流 Cash flow (8)
             "fcf_yield": 8,
             # 财务健康 Health (13) — cash runway is BINARY SURVIVAL for clinical-stage
             "de": 4, "interest_cov": 1, "current_ratio": 8,
-            # 股东回报 Shareholder (4)
-            "div_yield": 2, "buyback_yield": 2,
             # 风险 Risk (6)
             "beta": 6,
         },
-        "weight_rationale": "双峰 cohort：商业化阶段看毛利 10 + 营收 11 + ROIC 6；临床阶段看现金跑道 (流动比率 8) + 财务健康 13 — 安全权重为各板块最高。PEG 已剔除。",
+        "weight_rationale": "双峰 cohort：商业化阶段看毛利 11 + 营收 12 + ROIC 6；临床阶段看现金跑道 (流动比率 8) + 财务健康 13 — 安全权重为各板块最高。已删除股东回报维度（权重按比例并入）；PEG 不计分。",
     },
     "crypto": {
         "id": "crypto",
@@ -324,9 +314,10 @@ METRICS: Dict[str, Dict[str, Any]] = {
     "de":            {"label": "D/E",             "direction": "lower",  "pct": False, "group": "leverage"},
     "interest_cov":  {"label": "利息保障",        "direction": "higher", "pct": False, "group": "leverage"},
     "current_ratio": {"label": "流动比率",        "direction": "higher", "pct": False, "group": "leverage"},
-    # ── Return to shareholders ───────────────
-    "div_yield":     {"label": "股息率",          "direction": "higher", "pct": True,  "group": "shareholder"},
-    "buyback_yield": {"label": "回购收益率",      "direction": "higher", "pct": True,  "group": "shareholder"},
+    # NOTE: the 股东回报 (shareholder) dimension was removed. div_yield /
+    # buyback_yield are no longer scored metrics; their per-sector weight was
+    # folded proportionally into the remaining dimensions. The raw values are
+    # still computed in _normalise_row but carry no scoring weight.
     # ── Risk ─────────────────────────────────
     "beta":          {"label": "Beta",            "direction": "lower",  "pct": False, "group": "risk"},
 }
@@ -349,7 +340,6 @@ METRIC_GROUPS = {
     "growth":         "成长 · GROWTH",
     "cash_flow":      "现金流 · CASH FLOW",
     "leverage":       "财务健康 · FINANCIAL HEALTH",
-    "shareholder":    "股东回报 · SHAREHOLDER",
     # Crypto-only groups sit before risk so the crypto dimension order reads
     # 规模 → 流动 → 动量 → 回撤 → 风险. For stocks these groups are absent, so
     # risk stays last there too.
