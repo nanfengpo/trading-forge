@@ -677,31 +677,19 @@
       </div>
     </div>
 
-    <!-- ─── TOP / BOTTOM PICKS ─── -->
+    <!-- ─── TOP PICKS (最强 Top 10) ─── -->
     <div class="fund2-picks-shell">
       <div class="fund2-section-label">
         <span class="fund2-section-num">05</span>
-        <span class="fund2-section-name">最强 / 最弱 · PICKS</span>
-        <span class="fund2-section-hint">每张卡都拆解为 6 维度子分，强/弱项一目了然</span>
+        <span class="fund2-section-name">最强 · TOP PICKS</span>
+        <span class="fund2-section-hint">综合分前 10 名 · 每张卡拆解为 6 维度子分，强 / 弱项一目了然</span>
       </div>
-      <div class="fund2-picks-grid">
-        <div class="fund2-pick-col">
-          <div class="fund2-col-head fund2-col-head--good">
-            <span class="fund2-col-arrow">▲</span>
-            <span class="fund2-col-title">综合分 Top 5</span>
-            <span class="fund2-col-sub muted">板块内最具吸引力</span>
-          </div>
-          <div class="fund2-pick-list" id="fund2-top"></div>
-        </div>
-        <div class="fund2-pick-col">
-          <div class="fund2-col-head fund2-col-head--high">
-            <span class="fund2-col-arrow">▼</span>
-            <span class="fund2-col-title">综合分 Bottom 5</span>
-            <span class="fund2-col-sub muted">同板块对照</span>
-          </div>
-          <div class="fund2-pick-list" id="fund2-bot"></div>
-        </div>
+      <div class="fund2-col-head fund2-col-head--good">
+        <span class="fund2-col-arrow">▲</span>
+        <span class="fund2-col-title">综合分 Top 10</span>
+        <span class="fund2-col-sub muted">板块内最具吸引力的 10 只</span>
       </div>
+      <div class="fund2-pick-list fund2-pick-list--top10" id="fund2-top"></div>
     </div>
 
     <!-- ─── FULL TABLE ─── -->
@@ -728,16 +716,17 @@
       <div class="fund2-table-scroll">
         <table class="fund2-table" id="fund2-table">
           <thead>
+            <!-- Header is rebuilt by JS (rebuildTableHead) per sector — it
+                 inserts the per-sector dimension-score columns between 综合分
+                 and 现价. This static row is just the pre-load placeholder. -->
             <tr>
               <th class="fund2-th-rank" data-sort="rank" data-type="num">#</th>
-              <th data-sort="ticker" data-type="text">代码</th>
-              <th data-sort="name" data-type="text">公司</th>
+              <th class="fund2-th-co" data-sort="ticker" data-type="text">代码 / 公司</th>
               <th data-sort="sub_sector" data-type="text">子板块</th>
               <th class="fund2-th-score" data-sort="score" data-type="num">综合分 ▼</th>
               <th data-sort="price" data-type="num">现价</th>
               <th data-sort="pe" data-type="num">PE</th>
               <th data-sort="pe_fwd" data-type="num">Fwd PE</th>
-              <th data-sort="peg_av" data-type="num">PEG (AV)</th>
               <th data-sort="peg_fwd" data-type="num">PEG (Fwd)</th>
               <th data-sort="rev_growth" data-type="num">营收 YoY</th>
               <th data-sort="eps_growth" data-type="num">利润 YoY</th>

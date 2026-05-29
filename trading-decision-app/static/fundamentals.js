@@ -43,6 +43,7 @@
   let distChart = null;
   let subsecChart = null;
   let scatterChart = null;
+  let bkCharts = {};   // ticker → Chart instance for expanded-row radar charts
   let tableState = {
     sortKey: "score", sortDir: "desc",
     text: "", classFilter: "", subsecFilter: "",
@@ -281,20 +282,29 @@
     }
 
     const rows = (payload.rows || []).filter(r => isNum(r.score));
-    // Assign each ticker a small vertical jitter so dots don't fully stack.
-    const buckets = {};
+
+    // Stacked-dot histogram (Wilkinson dotplot): bin scores, then stack each
+    // bin's dots UPWARD from the baseline so column height = count. The vertical
+    // axis now carries real meaning (density) instead of arbitrary jitter — the
+    // shape reads as a left-to-right distribution. Threshold lines at 45 / 70.
+    // binW=5 → 20 bins across 0-100: tall enough stacks for the shape to emerge.
+    const binW = 5;
+    const bins = {};
     rows.forEach(r => {
-      const b = Math.round(r.score);
-      (buckets[b] = buckets[b] || []).push(r);
+      const b = Math.floor(r.score / binW);
+      (bins[b] = bins[b] || []).push(r);
     });
     const points = [];
-    Object.entries(buckets).forEach(([scoreStr, arr]) => {
-      const s = Number(scoreStr);
+    let maxStack = 1;
+    Object.keys(bins).forEach(bk => {
+      const arr = bins[bk];
+      arr.sort((a, b) => a.score - b.score);
+      const cx = (Number(bk) + 0.5) * binW;   // bin centre on the 0-100 axis
       arr.forEach((r, i) => {
-        const n = arr.length;
-        const y = n === 1 ? 0 : (-1 + (2 * i) / (n - 1));
-        points.push({ x: s, y, ticker: r.ticker, name: r.name, score: r.score, cls: r.score_class });
+        points.push({ x: cx, y: i + 0.5, ticker: r.ticker, name: r.name,
+                      score: r.score, cls: r.score_class });
       });
+      if (arr.length > maxStack) maxStack = arr.length;
     });
 
     const styles = getComputedStyle(document.documentElement);
@@ -304,13 +314,16 @@
     const midCol  = styles.getPropertyValue("--accent-3").trim() || "#b8860b";
     const highCol = styles.getPropertyValue("--danger").trim() || "#a83232";
 
+    // Dot radius shrinks if a column is very tall so stacks always fit.
+    const dotR = maxStack > 10 ? 4.5 : (maxStack > 6 ? 5.5 : 6.5);
+
     const ds = (cls, color) => ({
       label: cls === "good" ? "优秀 ≥70" : cls === "mid" ? "中性 45-70" : "弱势 <45",
       data: points.filter(p => p.cls === cls).map(p => ({ x: p.x, y: p.y, ticker: p.ticker, name: p.name, score: p.score })),
       backgroundColor: color + "cc",
       borderColor: color,
       borderWidth: 1,
-      pointRadius: 6, pointHoverRadius: 9,
+      pointRadius: dotR, pointHoverRadius: dotR + 3,
     });
 
     if (distChart) distChart.destroy();
@@ -320,13 +333,15 @@
       options: {
         responsive: true, maintainAspectRatio: false,
         animation: { duration: 250 },
+        // Padding keeps the leftmost/rightmost dots off the frame edge.
+        layout: { padding: { left: 4, right: 8, top: 6, bottom: 2 } },
         plugins: {
           legend: { display: false },
           tooltip: {
             callbacks: {
               label: ctx => {
                 const r = ctx.raw;
-                return r.ticker + " (" + (r.name || "") + ") · score " + Number(r.score).toFixed(1);
+                return r.ticker + " (" + (r.name || "") + ") · 综合分 " + Number(r.score).toFixed(1);
               },
               title: () => "",
             },
@@ -337,12 +352,13 @@
             type: "linear", min: 0, max: 100,
             grid: { color: borderCol, drawBorder: false },
             ticks: { color: mutedCol, font: { size: 11 }, stepSize: 10 },
-            title: { display: true, text: "综合分 (0-100)", color: mutedCol, font: { size: 11 } },
+            title: { display: true, text: "综合分 (0-100) · 越靠右越强", color: mutedCol, font: { size: 11 } },
           },
           y: {
-            min: -1.5, max: 1.5,
+            // Baseline at 0, room for the tallest stack + a little headroom.
+            min: 0, max: maxStack + 0.8,
             grid: { display: false }, ticks: { display: false }, border: { display: false },
-            title: { display: false },
+            title: { display: true, text: "↑ 只数", color: mutedCol, font: { size: 10 } },
           },
         },
       },
@@ -526,13 +542,19 @@
 
     // Cap axes so outliers don't compress the meaningful region.
     // Most stocks live in PE 0-80, EPS YoY -50% to +150%. Truncate further
-    // outliers visually (they cluster at the edge); hover tooltip still
-    // shows the real value, and they get a 🚀 ⬆ marker so the user knows.
+    // outliers visually (they cluster near the edge); hover tooltip still
+    // shows the real value.
     const peCap = 120;
     const epsCap = 300;
     const epsFloor = -100;
     const clampX = v => Math.min(peCap, Math.max(0, v));
     const clampY = v => Math.min(epsCap, Math.max(epsFloor, v));
+    // Axis bounds sit a margin OUTSIDE the clamp caps so a clamped (edge) point
+    // is drawn fully inside the frame instead of being sliced by the border.
+    const xMargin = peCap * 0.06;            // ≈ 7 PE units
+    const yMargin = (epsCap - epsFloor) * 0.05;  // ≈ 20 pct-points
+    const xMin = -xMargin, xMax = peCap + xMargin;
+    const yMin = epsFloor - yMargin, yMax = epsCap + yMargin;
 
     const ds = (cls, color) => ({
       label: cls === "good" ? "优秀 ≥70" : cls === "mid" ? "中性 45-70" : "弱势 <45",
@@ -562,6 +584,8 @@
       options: {
         responsive: true, maintainAspectRatio: false,
         animation: { duration: 300 },
+        // Frame padding so edge dots + their hover ring never clip the border.
+        layout: { padding: { left: 6, right: 14, top: 12, bottom: 6 } },
         plugins: {
           legend: { display: true,
             labels: { color: mutedCol, font: { size: 11 }, boxWidth: 10 } },
@@ -577,7 +601,7 @@
                   `Fwd PE: ${peStr}  ·  EPS YoY: ${epsStr}`,
                   `综合分: ${isNum(r.score) ? r.score.toFixed(1) : "—"}`,
                 ];
-                if (r.clamped) out.push("⚠ 该点超出坐标轴范围，已贴边显示");
+                if (r.clamped) out.push("⚠ 实际值超出坐标轴范围，已收于边缘内侧");
                 return out;
               },
               title: () => "",
@@ -586,18 +610,20 @@
         },
         scales: {
           x: {
-            min: 0, max: peCap,
+            min: xMin, max: xMax,
             grid: { color: borderCol, drawBorder: false },
-            ticks: { color: mutedCol, font: { size: 11 } },
-            title: { display: true, text: "Fwd PE (越低越便宜，>" + peCap + " 贴边)",
+            ticks: { color: mutedCol, font: { size: 11 },
+              // Hide the negative-margin tick so the axis still reads from 0.
+              callback: v => (v < 0 ? "" : v) },
+            title: { display: true, text: "Fwd PE (越低越便宜，>" + peCap + " 收于边缘)",
                      color: mutedCol, font: { size: 11 } },
           },
           y: {
-            min: epsFloor, max: epsCap,
+            min: yMin, max: yMax,
             grid: { color: borderCol, drawBorder: false },
             ticks: { color: mutedCol, font: { size: 11 },
               callback: v => v + "%" },
-            title: { display: true, text: "EPS YoY % (越高越成长，>" + epsCap + "% 贴边)",
+            title: { display: true, text: "EPS YoY % (越高越成长，>" + epsCap + "% 收于边缘)",
                      color: mutedCol, font: { size: 11 } },
           },
         },
@@ -684,6 +710,9 @@
       options: {
         responsive: true, maintainAspectRatio: false,
         animation: { duration: 300 },
+        // Frame padding so the largest (BTC-sized) dots near the edges + their
+        // hover ring stay fully inside the plot.
+        layout: { padding: { left: 6, right: 16, top: 12, bottom: 10 } },
         plugins: {
           legend: { display: true,
             labels: { color: mutedCol, font: { size: 11 }, boxWidth: 10 } },
@@ -705,13 +734,14 @@
         },
         scales: {
           x: {
+            grace: "8%",
             grid: { color: borderCol, drawBorder: false },
             ticks: { color: mutedCol, font: { size: 11 }, callback: v => v + "%" },
             title: { display: true, text: "30d 涨跌 % (右侧 = 上涨)",
                      color: mutedCol, font: { size: 11 } },
           },
           y: {
-            min: 0,
+            min: 0, grace: "8%",
             grid: { color: borderCol, drawBorder: false },
             ticks: { color: mutedCol, font: { size: 11 }, callback: v => v + "%" },
             title: { display: true, text: "距 ATH % (越高 = 折价越深，潜在空间越大)",
@@ -858,32 +888,78 @@
     return `hsla(${Math.round(hue)}, 55%, 45%, ${alpha})`;
   }
 
+  // Redesigned expanded row. Three deliberate visual layers:
+  //   1) HERO — the composite score (size = importance) next to a RADAR chart
+  //      that draws the stock's whole dimension profile in one shape. Plus a
+  //      one-line verdict naming the strongest + weakest dimension.
+  //   2) DIMENSION CARDS — one per scoring dimension, POSITIONED by importance
+  //      (heaviest sector weight first), SIZED by weight (tier), and COLOURED
+  //      by the dimension's score (heat border + score pill). Inside each, the
+  //      contributing metrics render as score-coloured bars.
+  //   3) SOURCES — which vendor supplied the data.
   function buildBreakdownPanel(row, payload) {
     const meta = payload.metrics_meta || {};
-    const groups = payload.metric_groups || {};
     const weights = (payload.sector && payload.sector.weights) || {};
     const subs = row.sub_scores || {};
-    const metricCount = Object.keys(meta).length;
-    const sectorMetricSet = payload.sector && payload.sector.metric_set;
+    const dimScores = row.dim_scores || {};
+    const dims = (payload.dimensions || []).slice();
+    const safe = (row.ticker || "").replace(/[^a-zA-Z0-9]/g, "_");
 
     const panel = el("div", { class: "fund2-bk-panel" });
 
-    // Header — ticker, name, overall score chip
-    panel.appendChild(el("div", { class: "fund2-bk-head" },
-      el("span", { class: "fund2-bk-head-icon" }, "🔬"),
-      el("span", { class: "fund2-bk-head-title" },
-        metricCount + " 维度评分构成"),
-      el("span", { class: "fund2-bk-head-ticker" }, row.ticker || ""),
-      el("span", { class: "fund2-bk-head-name muted" }, (row.name || "")),
-      el("span", { class: "fund2-bk-head-spacer" }),
-      el("span", { class: "fund2-bk-head-score fund2-c-" + (row.score_class || "na") },
-        fmtScore(row.score)),
-      el("span", { class: "fund2-bk-head-score-lbl muted" }, "综合分"),
-    ));
+    // ── 1. HERO: composite score + radar + verdict ──
+    const scored = dims
+      .map(d => ({ key: d.key, short: d.short, score: dimScores[d.key], weight: d.weight }))
+      .filter(d => isNum(d.score));
+    let strongest = null, weakest = null;
+    if (scored.length) {
+      const byScore = scored.slice().sort((a, b) => b.score - a.score);
+      strongest = byScore[0];
+      weakest = byScore[byScore.length - 1];
+    }
+    const clsWord = row.score_class === "good" ? "优秀"
+      : row.score_class === "mid" ? "中性"
+      : row.score_class === "high" ? "偏弱" : "无数据";
 
-    // Legend (color scale + arrow guide) — orients new users.
+    const hero = el("div", { class: "fund2-bk-hero" });
+
+    // Left: big score + verdict
+    const summary = el("div", { class: "fund2-bk-summary" });
+    summary.appendChild(el("div", { class: "fund2-bk-sum-head" },
+      el("span", { class: "fund2-bk-sum-ticker" }, row.ticker || ""),
+      el("span", { class: "fund2-bk-sum-name muted" }, row.name || ""),
+    ));
+    const scoreBlock = el("div", { class: "fund2-bk-sum-scoreblock" });
+    scoreBlock.appendChild(el("div", {
+      class: "fund2-bk-sum-score fund2-c-" + (row.score_class || "na"),
+    }, fmtScore(row.score)));
+    scoreBlock.appendChild(el("div", { class: "fund2-bk-sum-meta" },
+      el("div", { class: "fund2-bk-sum-score-lbl" }, "综合分 · 板块内百分位加权"),
+      el("div", { class: "fund2-bk-sum-class fund2-c-" + (row.score_class || "na") }, clsWord),
+    ));
+    summary.appendChild(scoreBlock);
+
+    if (strongest && weakest) {
+      const verdict = el("div", { class: "fund2-bk-sum-verdict" });
+      verdict.appendChild(el("span", { class: "fund2-bk-verdict-tag fund2-bk-verdict--up" },
+        "最强 ", el("strong", null, strongest.short), " " + Math.round(strongest.score)));
+      verdict.appendChild(el("span", { class: "fund2-bk-verdict-tag fund2-bk-verdict--down" },
+        "最弱 ", el("strong", null, weakest.short), " " + Math.round(weakest.score)));
+      summary.appendChild(verdict);
+    }
+    hero.appendChild(summary);
+
+    // Right: radar canvas (filled by initBkRadar once attached to the DOM)
+    if (dims.length >= 3) {
+      const radarWrap = el("div", { class: "fund2-bk-radar-wrap" });
+      radarWrap.appendChild(el("canvas", { id: "fund2-radar-" + safe }));
+      hero.appendChild(radarWrap);
+    }
+    panel.appendChild(hero);
+
+    // Compact legend strip — colour scale + direction guide.
     const legend = el("div", { class: "fund2-bk-legend" });
-    legend.appendChild(el("span", { class: "fund2-bk-legend-label" }, "子分配色"));
+    legend.appendChild(el("span", { class: "fund2-bk-legend-label" }, "评分配色"));
     [
       { label: "<45 弱", val: 22 },
       { label: "45-60",  val: 52 },
@@ -892,113 +968,112 @@
       { label: "≥85 强", val: 92 },
     ].forEach(s => {
       legend.appendChild(el("span", {
-        class: "fund2-bk-legend-swatch",
-        style: "background:" + heatColor(s.val) + ";",
+        class: "fund2-bk-legend-swatch", style: "background:" + heatColor(s.val) + ";",
       }, s.label));
     });
     legend.appendChild(el("span", { class: "fund2-bk-legend-spacer" }));
-    legend.appendChild(el("span", { class: "fund2-bk-legend-label" }, "方向"));
     legend.appendChild(el("span", { class: "fund2-bk-legend-arrow" }, "↑ 越高越好"));
     legend.appendChild(el("span", { class: "fund2-bk-legend-arrow" }, "↓ 越低越好"));
-    legend.appendChild(el("span", { class: "fund2-bk-legend-label" }, "瓦片大小"));
-    legend.appendChild(el("span", { class: "fund2-bk-legend-note" }, "= 权重"));
+    legend.appendChild(el("span", { class: "fund2-bk-legend-note muted" }, "卡片越大 = 该维度权重越高"));
     panel.appendChild(legend);
 
-    // Group by category
+    // ── 2. DIMENSION CARDS — sorted by sector weight desc (importance first) ──
     const byGroup = {};
     Object.entries(meta).forEach(([k, cfg]) => {
       const g = cfg.group || "other";
       (byGroup[g] = byGroup[g] || []).push(k);
     });
 
-    const groupGrid = el("div", { class: "fund2-bk-groups" });
+    const dimOrder = dims.slice().sort((a, b) => b.weight - a.weight);
+    const dimGrid = el("div", { class: "fund2-bk-dims" });
 
-    Object.keys(groups).forEach(g => {
-      const metricsInGroup = byGroup[g];
-      if (!metricsInGroup || metricsInGroup.length === 0) return;
+    dimOrder.forEach((d, idx) => {
+      const g = d.key;
+      const metricsInGroup = (byGroup[g] || []);
+      const dScore = dimScores[g];
+      const dCls = classOf(dScore);
+      // Size tier by weight — heaviest dimensions get the biggest cards.
+      const tier = d.weight >= 24 ? "lg" : (d.weight >= 10 ? "md" : "sm");
 
-      // Total weight in this group → drives whether the group occupies
-      // a "wide" or "narrow" column. Visualises which categories the
-      // sector cares about most.
-      const groupWeight = metricsInGroup.reduce((sum, k) => sum + (weights[k] || 0), 0);
-      // Weighted-average sub-score for the group (skipping missing).
-      let wSum = 0, scoreSum = 0;
-      metricsInGroup.forEach(k => {
-        const s = subs[k];
-        const w = weights[k] || 0;
-        if (isNum(s) && w > 0) {
-          wSum += w; scoreSum += s * w;
-        }
+      const card = el("div", {
+        class: "fund2-bk-dim fund2-bk-dim--" + tier,
+        style: isNum(dScore)
+          ? "border-left-color:" + heatColor(dScore) + ";" : "",
       });
-      const groupScore = wSum > 0 ? Math.round(scoreSum / wSum) : null;
 
-      const card = el("div", { class: "fund2-bk-group" });
-      // Group header: name + total weight + weighted avg sub-score
-      const header = el("div", { class: "fund2-bk-group-head" });
-      header.appendChild(el("span", { class: "fund2-bk-group-name" }, groups[g]));
-      header.appendChild(el("span", { class: "fund2-bk-group-weight muted" },
-        "板块权重 " + groupWeight + "%"));
-      if (isNum(groupScore)) {
-        const groupCls = classOf(groupScore);
-        const pill = el("span", { class: "fund2-bk-group-score fund2-c-" + groupCls,
-          style: "border-color:" + heatTint(groupScore, 0.7) + ";"
-               + "background:" + heatTint(groupScore, 0.15) + ";" },
-          String(groupScore));
-        header.appendChild(pill);
+      // Head: rank + name + weight + big score pill
+      const head = el("div", { class: "fund2-bk-dim-head" });
+      head.appendChild(el("span", { class: "fund2-bk-dim-rank" }, "#" + (idx + 1)));
+      head.appendChild(el("span", { class: "fund2-bk-dim-name" }, d.short));
+      head.appendChild(el("span", { class: "fund2-bk-dim-weight muted" }, "权重 " + d.weight + "%"));
+      head.appendChild(el("span", { class: "fund2-bk-dim-spacer" }));
+      if (isNum(dScore)) {
+        head.appendChild(el("span", {
+          class: "fund2-bk-dim-score fund2-c-" + dCls,
+          style: "background:" + heatTint(dScore, 0.18) + ";border-color:" + heatColor(dScore) + ";",
+        }, String(Math.round(dScore))));
+      } else {
+        head.appendChild(el("span", { class: "fund2-bk-dim-score fund2-c-na" }, "—"));
       }
-      card.appendChild(header);
+      card.appendChild(head);
 
-      // Tile grid — each metric is a tile sized by weight
-      const tiles = el("div", { class: "fund2-bk-tiles" });
-      metricsInGroup.forEach(k => {
-        const cfg = meta[k];
+      // Metric bars — weighted metrics first (sorted weight desc); skip 0-weight.
+      const weighted = metricsInGroup
+        .filter(k => (weights[k] || 0) > 0)
+        .sort((a, b) => (weights[b] || 0) - (weights[a] || 0));
+      const mWrap = el("div", { class: "fund2-bk-dim-metrics" });
+      weighted.forEach(k => {
+        const cfg = meta[k] || {};
         const sub = subs[k];
         const raw = row[k];
-        const w = weights[k] || 0;
-        const dirArrow = LOWER_BETTER_METRICS.has(k) ? "↓" : "↑";
-        const hasData = isNum(sub) || isNum(raw);
-        // Tile size class: 'lg' (weight ≥ 15), 'md' (≥ 8), 'sm' (else)
-        const sizeCls = w >= 15 ? "lg" : (w >= 8 ? "md" : "sm");
-        const colorCls = "fund2-bk-tile--" + (hasData ? classOf(sub) : "na");
-        const tile = el("div", {
-          class: "fund2-bk-tile " + colorCls + " fund2-bk-tile-" + sizeCls,
-          style: hasData && isNum(sub)
-            ? "background:" + heatTint(sub, 0.18) + ";"
-            + "border-color:" + heatTint(sub, 0.55) + ";"
-            : "",
-        });
-        // Top row: arrow + label + sub-score pill
-        const top = el("div", { class: "fund2-bk-tile-top" });
-        top.appendChild(el("span", {
-          class: "fund2-bk-tile-arrow",
+        const arrow = LOWER_BETTER_METRICS.has(k) ? "↓" : "↑";
+        const mrow = el("div", { class: "fund2-bk-mrow" });
+        mrow.appendChild(el("span", {
+          class: "fund2-bk-m-arrow",
           title: LOWER_BETTER_METRICS.has(k) ? "越低越好" : "越高越好",
-        }, dirArrow));
-        top.appendChild(el("span", { class: "fund2-bk-tile-label" }, cfg.label || k));
+        }, arrow));
+        mrow.appendChild(el("span", { class: "fund2-bk-m-label" }, cfg.label || k));
+        mrow.appendChild(el("span", { class: "fund2-bk-m-wt muted" }, (weights[k] || 0) + "%"));
+        const track = el("div", { class: "fund2-bk-m-track" });
         if (isNum(sub)) {
-          top.appendChild(el("span", {
-            class: "fund2-bk-tile-sub",
-            style: "background:" + heatColor(sub) + ";",
-          }, String(Math.round(sub))));
+          track.appendChild(el("div", {
+            class: "fund2-bk-m-fill",
+            style: "width:" + Math.max(2, Math.min(100, sub)) + "%;background:" + heatTint(sub, 0.85) + ";",
+          }));
         }
-        tile.appendChild(top);
-        // Centre: raw value (large) or em-dash for missing
-        const valWrap = el("div", { class: "fund2-bk-tile-val" + (hasData ? "" : " na") },
-          hasData ? formatMetricValue(k, raw) : "—");
-        tile.appendChild(valWrap);
-        // Bottom row: weight badge (small)
-        tile.appendChild(el("div", { class: "fund2-bk-tile-foot muted" },
-          w > 0 ? ("权重 " + w + "%") : "未参与评分"));
-        tiles.appendChild(tile);
+        mrow.appendChild(track);
+        mrow.appendChild(el("span", { class: "fund2-bk-m-raw" + (isNum(raw) ? "" : " na") },
+          isNum(raw) ? formatMetricValue(k, raw) : "—"));
+        if (isNum(sub)) {
+          mrow.appendChild(el("span", {
+            class: "fund2-bk-m-sub", style: "background:" + heatColor(sub) + ";",
+          }, String(Math.round(sub))));
+        } else {
+          mrow.appendChild(el("span", { class: "fund2-bk-m-sub fund2-bk-m-sub--na" }, "—"));
+        }
+        mWrap.appendChild(mrow);
       });
-      card.appendChild(tiles);
+      card.appendChild(mWrap);
 
-      groupGrid.appendChild(card);
+      // Reference line: present-but-unweighted metrics in this group (raw only).
+      const refs = metricsInGroup
+        .filter(k => (weights[k] || 0) === 0 && isNum(row[k]));
+      if (refs.length) {
+        const refLine = el("div", { class: "fund2-bk-dim-refs muted" });
+        refLine.appendChild(el("span", { class: "fund2-bk-dim-refs-lbl" }, "参考"));
+        refs.forEach(k => {
+          refLine.appendChild(el("span", { class: "fund2-bk-dim-ref" },
+            (meta[k].label || k) + " " + formatMetricValue(k, row[k])));
+        });
+        card.appendChild(refLine);
+      }
+
+      dimGrid.appendChild(card);
     });
 
-    panel.appendChild(groupGrid);
+    panel.appendChild(dimGrid);
 
-    // Sources strip — diagnostic showing which vendor filled each metric.
-    // Compact, only shows when we have source data.
+    // ── 3. SOURCES strip ──
     const src = row._sources || {};
     if (Object.keys(src).length > 0) {
       const counts = {};
@@ -1017,9 +1092,77 @@
     return panel;
   }
 
+  // Radar chart of a row's dimension scores. Called AFTER the panel's canvas is
+  // attached to the DOM (Chart.js needs a live canvas). Instance is tracked in
+  // bkCharts so applyTable can destroy it before re-rendering the tbody.
+  function initBkRadar(row, payload) {
+    if (!window.Chart) return;
+    const dims = payload.dimensions || [];
+    if (dims.length < 3) return;
+    const safe = (row.ticker || "").replace(/[^a-zA-Z0-9]/g, "_");
+    const canvas = document.getElementById("fund2-radar-" + safe);
+    if (!canvas) return;
+
+    const ds = row.dim_scores || {};
+    const labels = dims.map(d => DIM_SHORT[d.key] || d.short || d.key);
+    const data = dims.map(d => isNum(ds[d.key]) ? ds[d.key] : 0);
+
+    const styles = getComputedStyle(document.documentElement);
+    const muted = styles.getPropertyValue("--text-muted").trim() || "#807a72";
+    const border = styles.getPropertyValue("--border").trim() || "#e5dfd0";
+    const cls = row.score_class || "na";
+    const color = cls === "good" ? (styles.getPropertyValue("--success").trim() || "#2d6b3e")
+      : cls === "mid" ? (styles.getPropertyValue("--accent-3").trim() || "#b8860b")
+      : cls === "high" ? (styles.getPropertyValue("--danger").trim() || "#a83232")
+      : muted;
+
+    if (bkCharts[safe]) { try { bkCharts[safe].destroy(); } catch (e) {} }
+    bkCharts[safe] = new Chart(canvas, {
+      type: "radar",
+      data: {
+        labels,
+        datasets: [{
+          data,
+          backgroundColor: color + "30",
+          borderColor: color,
+          borderWidth: 2,
+          pointBackgroundColor: color,
+          pointBorderColor: color,
+          pointRadius: 3, pointHoverRadius: 5,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 350 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: () => "",
+              label: ctx => labels[ctx.dataIndex] + " 维度分 " + Math.round(ctx.raw),
+            },
+          },
+        },
+        scales: {
+          r: {
+            min: 0, max: 100,
+            ticks: {
+              stepSize: 25, color: muted, font: { size: 9 },
+              backdropColor: "transparent", showLabelBackdrop: false, z: 1,
+            },
+            grid: { color: border },
+            angleLines: { color: border },
+            pointLabels: { color: muted, font: { size: 10.5, weight: "600" } },
+          },
+        },
+      },
+    });
+  }
+
   function renderPicks(payload) {
+    // Strongest-only: the "weakest" column was removed; we now show the
+    // composite-score Top 10 in a single responsive grid.
     const top = document.getElementById("fund2-top");
-    const bot = document.getElementById("fund2-bot");
     const ctx = {
       isCrypto: payload.sector && payload.sector.metric_set === "crypto",
       meta: payload.metrics_meta || {},
@@ -1027,10 +1170,6 @@
     if (top) {
       top.innerHTML = "";
       (payload.top_picks || []).forEach(r => top.appendChild(pickCard(r, "good", ctx)));
-    }
-    if (bot) {
-      bot.innerHTML = "";
-      (payload.bottom_picks || []).forEach(r => bot.appendChild(pickCard(r, "high", ctx)));
     }
   }
 
@@ -1051,10 +1190,12 @@
         { key: "analyst_target", label: "ATH",   fmt: v => isNum(v) ? "$" + v.toFixed(2) : "—" },
       ];
     }
+    // Trailing raw-input columns. PEG (AV) removed — PEG is no longer a scored
+    // metric (it double-counted growth into valuation); PEG (Fwd) is kept as a
+    // display-only reference column.
     return [
       { key: "pe",          label: "PE",         fmt: fmt1 },
       { key: "pe_fwd",      label: "Fwd PE",     fmt: fmt1 },
-      { key: "peg_av",      label: "PEG (AV)",   fmt: fmt2 },
       { key: "peg_fwd",     label: "PEG (Fwd)",  fmt: fmt2 },
       { key: "rev_growth",  label: "营收 YoY",   fmt: fmtPct, pct: true },
       { key: "eps_growth",  label: "利润 YoY",   fmt: fmtPct, pct: true },
@@ -1062,26 +1203,54 @@
     ];
   }
 
+  // Per-sector dimension (group) columns — sortable. Sort key is "dim:<group>";
+  // applyTable reads the score from row.dim_scores[group].
+  const DIM_SHORT = {
+    valuation: "估值", profitability: "盈利", growth: "成长", cash_flow: "现金",
+    leverage: "健康", shareholder: "股东", risk: "风险",
+    scale: "规模", liquidity: "流动", momentum: "动量", drawdown: "回撤",
+  };
+  function dimColumnsFor(payload) {
+    return (payload.dimensions || []).map(d => ({
+      key: "dim:" + d.key,
+      dim: d.key,
+      label: DIM_SHORT[d.key] || d.short || d.key,
+      weight: d.weight,
+    }));
+  }
+
   function rebuildTableHead(payload) {
     const thead = document.querySelector("#fund2-table thead tr");
     if (!thead) return;
     thead.innerHTML = "";
-    // Fixed leading columns
+    // Fixed leading columns — 代码 + 公司 merged into one sortable column.
     [
-      { key: "rank",       label: "#",      cls: "fund2-th-rank",  type: "num"  },
-      { key: "ticker",     label: "代码",                                 type: "text" },
-      { key: "name",       label: "公司",                                 type: "text" },
+      { key: "rank",       label: "#",          cls: "fund2-th-rank",  type: "num"  },
+      { key: "ticker",     label: "代码 / 公司", cls: "fund2-th-co",    type: "text" },
       { key: "sub_sector", label: "子板块",                              type: "text" },
-      { key: "score",      label: "综合分",  cls: "fund2-th-score", type: "num"  },
-      { key: "price",      label: "现价",                                 type: "num"  },
+      { key: "score",      label: "综合分",      cls: "fund2-th-score", type: "num"  },
     ].forEach(c => {
-      const th = el("th", { class: c.cls || "", "data-sort": c.key, "data-type": c.type },
-                    c.label);
-      thead.appendChild(th);
+      thead.appendChild(el("th", { class: c.cls || "", "data-sort": c.key, "data-type": c.type },
+                          c.label));
     });
+    // Dimension score columns (sortable). Grouped right after 综合分 so all the
+    // scores cluster together for scanning.
+    dimColumnsFor(payload).forEach(c => {
+      thead.appendChild(el("th", {
+        class: "fund2-th-dim", "data-sort": c.key, "data-type": "num",
+        title: c.label + " 维度评分 · 板块权重 " + c.weight + "%",
+      }, c.label));
+    });
+    // Price, then the trailing raw-input columns.
+    thead.appendChild(el("th", { "data-sort": "price", "data-type": "num" }, "现价"));
     tableColumnsFor(payload).forEach(c => {
       thead.appendChild(el("th", { "data-sort": c.key, "data-type": "num" }, c.label));
     });
+  }
+
+  // Total column count for the current sector — drives the expanded-row colspan.
+  function tableColSpan(payload) {
+    return 4 + dimColumnsFor(payload).length + 1 + tableColumnsFor(payload).length;
   }
 
   const NUM_KEYS = new Set([
@@ -1116,9 +1285,14 @@
       const mS = !sf || r.sub_sector === sf;
       return mQ && mC && mS;
     });
+    // Dimension columns sort on row.dim_scores[group] via the "dim:<group>" key.
+    const sortKey = tableState.sortKey;
+    const isDimKey = sortKey.indexOf("dim:") === 0;
+    const getVal = r => isDimKey ? (r.dim_scores || {})[sortKey.slice(4)] : r[sortKey];
+    const numeric = isDimKey || NUM_KEYS.has(sortKey);
     filtered.sort((a, b) => {
-      let va = a[tableState.sortKey], vb = b[tableState.sortKey];
-      if (NUM_KEYS.has(tableState.sortKey)) {
+      let va = getVal(a), vb = getVal(b);
+      if (numeric) {
         if (!isNum(va)) va = tableState.sortDir === "asc" ?  Infinity : -Infinity;
         if (!isNum(vb)) vb = tableState.sortDir === "asc" ?  Infinity : -Infinity;
         return tableState.sortDir === "asc" ? va - vb : vb - va;
@@ -1126,6 +1300,11 @@
       va = String(va || ""); vb = String(vb || "");
       return tableState.sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
     });
+
+    // Destroy any live expanded-row radar charts before we blow away the DOM
+    // they're attached to (applyTable re-renders the whole tbody on each toggle).
+    Object.keys(bkCharts).forEach(k => { try { bkCharts[k].destroy(); } catch (e) {} });
+    bkCharts = {};
 
     tbody.innerHTML = "";
     filtered.forEach(r => {
@@ -1141,8 +1320,11 @@
         },
       });
       tr.appendChild(el("td", { class: "fund2-td-rank" }, "#" + r.rank));
-      tr.appendChild(el("td", { class: "fund2-td-ticker" }, r.ticker || ""));
-      tr.appendChild(el("td", { class: "fund2-td-name muted" }, (r.name || "").slice(0, 28)));
+      // 代码 / 公司 merged — ticker prominent, company name muted beneath.
+      const coTd = el("td", { class: "fund2-td-co" });
+      coTd.appendChild(el("span", { class: "fund2-td-ticker" }, r.ticker || ""));
+      coTd.appendChild(el("span", { class: "fund2-td-coname muted" }, (r.name || "").slice(0, 26)));
+      tr.appendChild(coTd);
       // 子板块 cell — chip-style label
       const subTd = el("td", { class: "fund2-td-subsec" });
       if (r.sub_sector) subTd.appendChild(el("span", { class: "fund2-subsec-chip" }, r.sub_sector));
@@ -1163,6 +1345,22 @@
         fmtScore(r.score)));
       scoreTd.appendChild(scoreBar);
       tr.appendChild(scoreTd);
+
+      // Dimension score cells — compact colour-tinted chips (sortable columns).
+      const dimScores = r.dim_scores || {};
+      dimColumnsFor(payload).forEach(c => {
+        const v = dimScores[c.dim];
+        const td = el("td", { class: "fund2-td-dim num" });
+        if (isNum(v)) {
+          td.appendChild(el("span", {
+            class: "fund2-dim-chip fund2-c-" + classOf(v),
+            style: "background:" + heatTint(v, 0.16) + ";border-color:" + heatTint(v, 0.50) + ";",
+          }, String(Math.round(v))));
+        } else {
+          td.appendChild(el("span", { class: "muted" }, "—"));
+        }
+        tr.appendChild(td);
+      });
 
       // Live price + day change %
       const priceTd = el("td", { class: "fund2-td-price num" });
@@ -1189,10 +1387,12 @@
 
       if (isExp) {
         const exTr = el("tr", { class: "fund2-row-ex" });
-        const exTd = el("td", { class: "fund2-row-ex-td", colspan: "13" });
+        const exTd = el("td", { class: "fund2-row-ex-td", colspan: String(tableColSpan(payload)) });
         exTd.appendChild(buildBreakdownPanel(r, payload));
         exTr.appendChild(exTd);
         tbody.appendChild(exTr);
+        // Radar chart needs its canvas attached to the DOM first.
+        initBkRadar(r, payload);
       }
     });
 
@@ -1248,14 +1448,12 @@
     if (card) card.innerHTML = '<div class="fund2-skel">加载 ' + id + ' 板块数据…</div>';
     if (hint) hint.textContent = "加载中…";
     const top = document.getElementById("fund2-top");
-    const bot = document.getElementById("fund2-bot");
     const tbody = document.getElementById("fund2-tbody");
     const com = document.getElementById("fund2-commentary");
     if (top) top.innerHTML = "";
-    if (bot) bot.innerHTML = "";
     if (com) com.innerHTML = '<div class="fund2-skel">加载中…</div>';
     if (tbody) tbody.innerHTML =
-      '<tr><td colspan="13" class="muted" style="text-align:center;padding:32px;">加载中…</td></tr>';
+      '<tr><td colspan="20" class="muted" style="text-align:center;padding:32px;">加载中…</td></tr>';
 
     try {
       const payload = await fetchSector(id, opts);

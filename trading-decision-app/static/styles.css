@@ -2246,6 +2246,7 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   gap: 16px;
+  align-items: start;   /* don't stretch the chart column to the tall left card */
 }
 @media (max-width: 1100px) {
   .fund2-deep-grid { grid-template-columns: 1fr; }
@@ -2352,7 +2353,7 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 
 /* ─── Distribution chart (right) ─── */
 .fund2-deep-right {
-  display: flex; flex-direction: column; min-height: 360px;
+  display: flex; flex-direction: column; height: 440px;
 }
 .fund2-dist-head {
   display: flex; justify-content: space-between; align-items: flex-start;
@@ -2380,14 +2381,8 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   position: relative; flex: 1; min-height: 280px;
 }
 
-/* ─── PICKS ─── */
+/* ─── PICKS (最强 Top 10 — single responsive grid) ─── */
 .fund2-picks-shell { display: flex; flex-direction: column; }
-.fund2-picks-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-}
-@media (max-width: 900px) {
-  .fund2-picks-grid { grid-template-columns: 1fr; }
-}
 
 .fund2-col-head {
   display: flex; align-items: baseline; gap: 8px;
@@ -2410,12 +2405,11 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 .fund2-col-sub { font-size: 11.5px; }
 
 .fund2-pick-list {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
+  gap: 10px;
 }
-@media (max-width: 1200px) {
-  .fund2-pick-list { grid-template-columns: 1fr 1fr; }
-}
-@media (max-width: 700px) {
+@media (max-width: 560px) {
   .fund2-pick-list { grid-template-columns: 1fr; }
 }
 
@@ -2531,7 +2525,7 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 }
 .fund2-table-scroll {
   background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 10px; overflow: hidden;
+  border-radius: 10px; overflow-x: auto; overflow-y: visible;
 }
 
 .fund2-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -2568,12 +2562,32 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px; color: var(--text-muted);
 }
+/* 代码 / 公司 merged cell — ticker prominent, company name muted beneath */
+.fund2-th-co { min-width: 152px; }
+.fund2-td-co { line-height: 1.2; min-width: 152px; }
 .fund2-td-ticker {
+  display: block;
   font-family: Georgia, serif;
   font-weight: 700; color: var(--accent);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.02em; font-size: 13.5px;
 }
-.fund2-td-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.fund2-td-coname {
+  display: block;
+  font-size: 10.5px; max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Dimension-score columns — compact colour-tinted chips */
+.fund2-th-dim { text-align: center !important; min-width: 42px; padding-left: 6px; padding-right: 6px; }
+.fund2-td-dim { text-align: center; }
+.fund2-dim-chip {
+  display: inline-block; min-width: 26px;
+  padding: 2px 6px; border-radius: 5px;
+  border: 1px solid transparent;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 
 .fund2-td-score-wrap {
   display: flex; align-items: center; gap: 8px;
@@ -2598,34 +2612,69 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 
 .fund2-bk-panel {
   display: flex; flex-direction: column; gap: 14px;
+  /* Cap width so the panel doesn't stretch across the (wide, scrollable)
+     ledger — keeps the radar next to the summary instead of far to the right. */
+  max-width: 1200px;
 }
 
-/* Header strip — ticker + name + composite score */
-.fund2-bk-head {
-  display: flex; align-items: baseline; gap: 8px;
-  padding-bottom: 10px;
+/* HERO — composite score + verdict (left) | dimension radar (right) */
+.fund2-bk-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 18px; align-items: center;
+  padding-bottom: 14px;
   border-bottom: 1px dashed var(--border);
 }
-.fund2-bk-head-icon { font-size: 16px; }
-.fund2-bk-head-title {
-  font-size: 11px; font-weight: 700; letter-spacing: 0.16em;
-  text-transform: uppercase; color: var(--text-muted);
+@media (max-width: 760px) {
+  .fund2-bk-hero { grid-template-columns: 1fr; }
 }
-.fund2-bk-head-ticker {
-  font-size: 18px; font-weight: 800; color: var(--accent);
-  letter-spacing: 0.04em;
+.fund2-bk-summary { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.fund2-bk-sum-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.fund2-bk-sum-ticker {
+  font-family: Georgia, serif; font-size: 22px; font-weight: 800;
+  color: var(--accent); letter-spacing: 0.03em;
+}
+.fund2-bk-sum-name {
+  font-size: 13px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fund2-bk-sum-scoreblock { display: flex; align-items: center; gap: 14px; }
+.fund2-bk-sum-score {
   font-family: Georgia, serif;
-  margin-left: 6px;
+  font-size: 56px; font-weight: 800; line-height: 0.9;
+  letter-spacing: -0.03em;
 }
-.fund2-bk-head-name { font-size: 13px; }
-.fund2-bk-head-spacer { flex: 1; }
-.fund2-bk-head-score {
+.fund2-bk-sum-meta { display: flex; flex-direction: column; gap: 4px; }
+.fund2-bk-sum-score-lbl {
+  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.fund2-bk-sum-class {
+  font-size: 16px; font-weight: 700;
   font-family: Georgia, serif;
-  font-size: 30px; font-weight: 800; line-height: 1;
-  letter-spacing: -0.02em;
 }
-.fund2-bk-head-score-lbl {
-  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+.fund2-bk-sum-verdict { display: flex; gap: 8px; flex-wrap: wrap; }
+.fund2-bk-verdict-tag {
+  font-size: 12px; padding: 4px 10px; border-radius: 6px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+.fund2-bk-verdict-tag strong { font-weight: 800; }
+.fund2-bk-verdict--up {
+  background: rgba(45,107,62,0.10); color: var(--success);
+  border: 1px solid rgba(45,107,62,0.30);
+}
+.fund2-bk-verdict--down {
+  background: rgba(168,50,50,0.10); color: var(--danger);
+  border: 1px solid rgba(168,50,50,0.30);
+}
+[data-theme="dark"] .fund2-bk-verdict--up {
+  background: rgba(102,187,106,0.12); border-color: rgba(102,187,106,0.35);
+}
+[data-theme="dark"] .fund2-bk-verdict--down {
+  background: rgba(229,115,115,0.12); border-color: rgba(229,115,115,0.35);
+}
+.fund2-bk-radar-wrap {
+  position: relative; height: 200px; width: 100%;
 }
 
 /* Legend strip — colour scale + arrow guide */
@@ -2658,118 +2707,104 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 }
 .fund2-bk-legend-note { font-size: 10px; }
 
-/* Group grid — 2-up by default, 1-up on narrow viewports */
-.fund2-bk-groups {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+/* DIMENSION CARDS — POSITION encodes importance (sorted by sector weight),
+   SIZE encodes weight (tier), COLOUR encodes the dimension's score (heat
+   border-left + score pill). Each card lists its metrics as score-coloured bars. */
+.fund2-bk-dims {
+  display: flex; flex-wrap: wrap; gap: 12px;
 }
-@media (max-width: 1100px) {
-  .fund2-bk-groups { grid-template-columns: 1fr; }
-}
-.fund2-bk-group {
+.fund2-bk-dim {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent-3);
-  border-radius: 8px;
-  padding: 12px 14px;
-  display: flex; flex-direction: column; gap: 10px;
-}
-.fund2-bk-group-head {
-  display: flex; align-items: center; gap: 8px;
-}
-.fund2-bk-group-name {
-  font-size: 11.5px; font-weight: 700; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--accent-3);
-}
-.fund2-bk-group-weight {
-  font-size: 10.5px;
-  font-family: "SF Mono", Menlo, Consolas, monospace;
-}
-.fund2-bk-group-score {
-  margin-left: auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 36px; height: 22px; padding: 0 8px;
-  font-family: "SF Mono", Menlo, Consolas, monospace;
-  font-size: 13px; font-weight: 700;
-  border-radius: 11px;
-  border: 1px solid var(--border-strong);
-}
-
-/* Tile grid inside a group — flex with wrap so weight-based sizing flows */
-.fund2-bk-tiles {
-  display: flex; flex-wrap: wrap; gap: 8px;
-}
-.fund2-bk-tile {
-  flex: 1 1 90px;
-  min-height: 78px;
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 7px 9px;
-  display: flex; flex-direction: column; gap: 4px;
-  transition: transform .15s ease, box-shadow .15s ease;
-  position: relative;
-}
-.fund2-bk-tile:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(0,0,0,0.08);
-  z-index: 1;
-}
-.fund2-bk-tile-sm { flex-basis: 90px;  min-height: 70px; }
-.fund2-bk-tile-md { flex-basis: 130px; min-height: 84px; }
-.fund2-bk-tile-lg { flex-basis: 170px; min-height: 96px; flex-grow: 1.2; }
-
-/* Missing-data tile is dashed + greyed */
-.fund2-bk-tile--na {
-  background: transparent;
-  border-style: dashed;
-  opacity: 0.6;
-}
-.fund2-bk-tile--na .fund2-bk-tile-val { color: var(--text-muted); }
-
-.fund2-bk-tile-top {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 11px;
-}
-.fund2-bk-tile-arrow {
-  font-weight: 800;
-  color: var(--text);
-  width: 12px; text-align: center; display: inline-block;
-  flex-shrink: 0;
-}
-.fund2-bk-tile-label {
-  flex: 1; min-width: 0;
-  color: var(--text); font-weight: 600;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.fund2-bk-tile-sub {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 24px; height: 18px; padding: 0 5px;
-  font-family: "SF Mono", Menlo, Consolas, monospace;
-  font-size: 10.5px; font-weight: 700;
-  color: #fff;
+  border-left: 4px solid var(--border-strong);
   border-radius: 9px;
-  text-shadow: 0 1px 1px rgba(0,0,0,0.3);
-  flex-shrink: 0;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 9px;
+  transition: transform .15s ease, box-shadow .15s ease;
 }
+.fund2-bk-dim:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 12px rgba(0,0,0,0.07);
+}
+/* size tiers — heaviest dimensions claim more horizontal room */
+.fund2-bk-dim--sm { flex: 1 1 264px; }
+.fund2-bk-dim--md { flex: 1 1 300px; }
+.fund2-bk-dim--lg { flex: 2 1 350px; }
 
-.fund2-bk-tile-val {
-  flex: 1;
-  display: flex; align-items: center; justify-content: center;
+.fund2-bk-dim-head {
+  display: flex; align-items: center; gap: 8px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.fund2-bk-dim-rank {
   font-family: "SF Mono", Menlo, Consolas, monospace;
-  font-size: 16px; font-weight: 700;
-  color: var(--text);
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+}
+.fund2-bk-dim-name {
+  font-size: 14px; font-weight: 700; color: var(--text);
+  font-family: Georgia, serif; letter-spacing: 0.02em;
+}
+.fund2-bk-dim-weight {
+  font-size: 10.5px; font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+.fund2-bk-dim-spacer { flex: 1; }
+.fund2-bk-dim-score {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 42px; height: 30px; padding: 0 10px;
+  font-family: Georgia, serif; font-size: 19px; font-weight: 800;
+  border-radius: 8px; border: 1.5px solid var(--border-strong);
   letter-spacing: -0.01em;
-  padding: 2px 0;
 }
-.fund2-bk-tile-lg .fund2-bk-tile-val { font-size: 20px; }
-.fund2-bk-tile-sm .fund2-bk-tile-val { font-size: 14px; }
 
-.fund2-bk-tile-foot {
-  font-size: 10px;
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+.fund2-bk-dim-metrics { display: flex; flex-direction: column; gap: 6px; }
+.fund2-bk-mrow {
+  display: grid;
+  grid-template-columns: 13px minmax(58px, 1.1fr) 26px minmax(28px, 1.2fr) 46px 24px;
+  gap: 5px; align-items: center;
+  font-size: 11.5px;
+}
+.fund2-bk-m-arrow { font-weight: 800; color: var(--text-muted); text-align: center; }
+.fund2-bk-m-label {
+  color: var(--text); font-weight: 600;
+  line-height: 1.2; word-break: break-word;
+}
+.fund2-bk-m-wt {
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 9.5px;
   text-align: right;
+}
+.fund2-bk-m-track {
+  height: 7px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+}
+.fund2-bk-m-fill { height: 100%; border-radius: 3px; }
+.fund2-bk-m-raw {
+  text-align: right; color: var(--text);
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11px; font-weight: 600;
+}
+.fund2-bk-m-raw.na { color: var(--text-muted); font-weight: 400; }
+.fund2-bk-m-sub {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 18px; padding: 0 4px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10.5px; font-weight: 700; color: #fff;
+  border-radius: 5px; text-shadow: 0 1px 1px rgba(0,0,0,0.3);
+}
+.fund2-bk-m-sub--na {
+  background: var(--border-strong) !important; color: var(--text-muted);
+  text-shadow: none;
+}
+
+.fund2-bk-dim-refs {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding-top: 6px; border-top: 1px dashed var(--border);
+}
+.fund2-bk-dim-refs-lbl {
+  font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.fund2-bk-dim-ref {
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 10px;
+  padding: 1px 6px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 3px; color: var(--text-soft);
 }
 
 /* Sources strip at bottom */

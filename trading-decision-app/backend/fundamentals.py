@@ -60,40 +60,44 @@ SECTORS: Dict[str, Dict[str, Any]] = {
         "id": "ai",
         "name": "AI 看板",
         "icon": "🤖",
-        "desc": "AI 产业链：算力芯片、服务器、光通信、HBM、散热电源、数据中心 REIT、超大规模云厂商。"
-                "成长权重高、PEG 权重高、估值绝对水位次要。",
+        "desc": "AI 全产业链（参考 AIQ / CHAT 等 ETF）：上游半导体设备/EDA → 算力芯片 → "
+                "服务器整机 → 光通信/网络/散热电源 → 数据中心 → 超大规模云/平台 → "
+                "AI 软件应用 → AI 终端。成长 + 资本效率（ROIC）+ 现金流为核心，"
+                "估值绝对水位次要；PEG 已退出打分以避免估值/成长重复计数。",
         "sub_sectors": [
-            ("AI芯片",            ["NVDA", "AVGO", "AMD", "TSM", "MU", "INTC", "ARM", "QCOM", "MRVL"]),
+            ("半导体设备/EDA",    ["ASML", "AMAT", "LRCX", "KLAC", "TER", "SNPS", "CDNS"]),
+            ("AI芯片/算力",        ["NVDA", "AMD", "AVGO", "TSM", "MRVL", "ARM", "QCOM", "INTC", "MU"]),
             ("AI服务器/整机",      ["DELL", "SMCI", "HPE", "CLS"]),
             ("光模块/光通信",      ["COHR", "LITE", "CIEN", "FN"]),
+            ("网络/交换",         ["ANET", "ALAB", "CSCO"]),
             ("散热/电源/连接器",    ["VRT", "TEL", "APH"]),
-            ("网络/交换",         ["ANET", "ALAB"]),
-            ("数据中心REIT",      ["EQIX", "DLR"]),
-            ("超大规模云厂商",      ["GOOGL", "MSFT", "META", "AMZN"]),
+            ("数据中心/REIT",     ["EQIX", "DLR"]),
+            ("超大规模云/平台",     ["MSFT", "GOOGL", "AMZN", "META", "ORCL"]),
+            ("AI软件/应用",        ["PLTR", "CRM", "NOW", "SNOW", "PANW", "CRWD", "ADBE", "INTU"]),
+            ("AI终端/边缘",        ["AAPL", "TSLA"]),
         ],
-        # weights MUST sum to 100. Re-derived via 5-panel debate (Value /
-        # Growth / Quant / Sector-spec / Risk) in Round 2 — median + reasoned
-        # overrides. ROIC raised +7 (capital-efficiency moat); EPS growth
-        # trimmed -5 (consensus that headline growth gets double-counted via
-        # PEG); leverage block lifted +3 (cohort isn't uniformly net-cash —
-        # CLS/SMCI/VRT/ALAB carry real debt).
+        # weights MUST sum to 100. Dimensions are now CLEAN (no metric counted
+        # twice): PEG removed from scoring entirely — it embedded growth into
+        # the valuation axis, double-counting against the dedicated 成长 block.
+        # Freed PEG weight (was 18) redistributed to pure multiples + growth +
+        # ROIC. Growth-tilted cohort (most names compound on revenue, not yield).
         "weights": {
-            # Valuation (32)
-            "pe": 2, "pe_fwd": 5, "peg_av": 6, "peg_fwd": 12, "ps": 4, "pb": 0, "ev_ebitda": 3,
-            # Profitability (27) — ROIC + GM = the QMJ + Novy-Marx quality axes
-            "eps": 0, "roe": 3, "roic": 11, "gross_margin": 8, "op_margin": 5,
-            # Growth (20)
-            "rev_growth": 11, "eps_growth": 9,
-            # Cash flow (8) — owner-earnings reality check
-            "fcf_yield": 8,
-            # Leverage (5) — non-zero because cohort isn't uniformly net-cash
-            "de": 3, "interest_cov": 2, "current_ratio": 0,
-            # Shareholder (2)
+            # 估值 Valuation (23) — pure price multiples only
+            "pe": 3, "pe_fwd": 8, "ps": 5, "pb": 0, "ev_ebitda": 7,
+            # 盈利质量 Profitability (30) — ROIC + GM = QMJ + Novy-Marx quality axes
+            "eps": 0, "roe": 4, "roic": 14, "gross_margin": 8, "op_margin": 4,
+            # 成长 Growth (26) — the AI thesis; rev + earnings momentum
+            "rev_growth": 14, "eps_growth": 12,
+            # 现金流 Cash flow (9) — owner-earnings reality check vs GPU resale
+            "fcf_yield": 9,
+            # 财务健康 Health (4) — cohort isn't uniformly net-cash (CLS/SMCI/VRT)
+            "de": 3, "interest_cov": 1, "current_ratio": 0,
+            # 股东回报 Shareholder (2)
             "div_yield": 0, "buyback_yield": 2,
-            # Risk (6) — late-cycle high-beta penalty
+            # 风险 Risk (6) — late-cycle high-beta penalty
             "beta": 6,
         },
-        "weight_rationale": "成长 × 资本效率 × 现金流：ROIC 11 + 毛利 8 + 营收 11 + 前瞻 PEG 12 共占 42 — 区分真复利与卖 GPU 转售。",
+        "weight_rationale": "成长 × 资本效率 × 现金流：ROIC 14 + 毛利 8 + 营收 14 + 利润 12 共占 48 — 区分真复利与卖 GPU 转售。PEG 已剔除（其本身=PE÷增速，与独立的成长维度重复计数）。",
     },
     "energy": {
         "id": "energy",
@@ -108,29 +112,28 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("公用事业电力",        ["NEE", "DUK", "SO", "AEP", "D", "SRE", "EXC"]),
             ("IPP / 核电",         ["VST", "CEG", "TLN"]),
         ],
-        # Re-derived via 5-panel debate. Quant + Sector argued EV/EBITDA is
-        # THE energy metric (MLP/upstream standard; DD&A makes PE noisy) and
-        # the median lifted from 2 → 12 (+10). ROIC raised +5 to separate
-        # disciplined operators (XOM, EOG) from value traps. PE cut -6 (the
-        # classic "cheap-at-the-top" cyclical trap). EPS growth -3 (commodity-
-        # price artifact, not skill).
+        # Dimensions cleaned (PEG removed — double-counted growth). EV/EBITDA is
+        # THE energy metric (MLP/upstream standard; DD&A makes PE noisy). ROIC
+        # separates disciplined operators (XOM, EOG) from value traps. PE kept
+        # low (the classic "cheap-at-the-top" cyclical trap). Growth deliberately
+        # tiny — production growth at peak is value-destructive.
         "weights": {
-            # Valuation (33) — EV/EBITDA dominates (debt-adjusted across MLP/E&P/utility)
-            "pe": 3, "pe_fwd": 5, "peg_av": 2, "peg_fwd": 3, "ps": 2, "pb": 6, "ev_ebitda": 12,
-            # Profitability (21) — ROIC separates capital-allocation winners
-            "eps": 1, "roe": 5, "roic": 10, "gross_margin": 2, "op_margin": 3,
-            # Growth (6) — production growth at peak is value-destructive
-            "rev_growth": 3, "eps_growth": 3,
-            # Cash flow (14) — post-2021 shareholder-return thesis lives here
-            "fcf_yield": 14,
-            # Leverage (13) — 2014-16 + 2020 taught us capital structure = survival
-            "de": 6, "interest_cov": 5, "current_ratio": 2,
-            # Shareholder (8) — energy is a yield sector post-2021
+            # 估值 Valuation (30) — EV/EBITDA dominates (debt-adjusted across MLP/E&P/utility)
+            "pe": 3, "pe_fwd": 5, "ps": 2, "pb": 6, "ev_ebitda": 14,
+            # 盈利质量 Profitability (22) — ROIC separates capital-allocation winners
+            "eps": 0, "roe": 5, "roic": 11, "gross_margin": 2, "op_margin": 4,
+            # 成长 Growth (8) — production growth at peak is value-destructive
+            "rev_growth": 4, "eps_growth": 4,
+            # 现金流 Cash flow (15) — post-2021 shareholder-return thesis lives here
+            "fcf_yield": 15,
+            # 财务健康 Health (12) — 2014-16 + 2020 taught us capital structure = survival
+            "de": 6, "interest_cov": 4, "current_ratio": 2,
+            # 股东回报 Shareholder (8) — energy is a yield sector post-2021
             "div_yield": 5, "buyback_yield": 3,
-            # Risk (5) — moderate; commodity beta is partly already in EV/EBITDA
+            # 风险 Risk (5) — moderate; commodity beta is partly already in EV/EBITDA
             "beta": 5,
         },
-        "weight_rationale": "现金 × 资本结构：EV/EBITDA 12 + FCF 收益率 14 + ROIC 10 共占 36 — post-2021 股东回报 thesis；杠杆+股息 22 防穿越油价低谷。",
+        "weight_rationale": "现金 × 资本结构：EV/EBITDA 14 + FCF 收益率 15 + ROIC 11 共占 40 — post-2021 股东回报 thesis；财务健康 12 + 股息回购 8 防穿越油价低谷。PEG 已剔除。",
     },
     "materials": {
         "id": "materials",
@@ -146,29 +149,28 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("矿业巨头",           ["BHP", "RIO", "VALE"]),
             ("工业气体 / 化工",    ["LIN", "APD", "SHW"]),
         ],
-        # Re-derived via 5-panel debate. THE biggest baseline error: EPS-growth
-        # at 14 (cycle-peak EPS is a CONTRA-indicator, not a buy signal).
-        # All 5 panellists agreed: cut to 4. EV/EBITDA +9 (cyclical comp
-        # standard for miners/specialty chems), ROIC +5 (separates LIN/SHW
-        # quality compounders from FCX/AA pure cyclicals), PE -3 (peak-cycle PE
-        # trap), Rev growth -5 (capacity expansion at peak = value destruction).
+        # Cyclical reflexes baked in: EPS-growth-at-top is a CONTRA-indicator
+        # (cycle-peak EPS is not a buy signal), so growth is kept tiny. EV/EBITDA
+        # is the cyclical comp standard for miners/specialty chems. ROIC separates
+        # LIN/SHW quality compounders from FCX/AA pure cyclicals. PEG removed
+        # (double-counted growth — especially toxic in a peak-cycle cohort).
         "weights": {
-            # Valuation (35) — EV/EBITDA is the cyclical comp standard
-            "pe": 3, "pe_fwd": 4, "peg_av": 3, "peg_fwd": 4, "ps": 3, "pb": 7, "ev_ebitda": 11,
-            # Profitability (24) — ROIC separates specialty from commodity
-            "eps": 2, "roe": 6, "roic": 10, "gross_margin": 4, "op_margin": 4,
-            # Growth (7) — EPS-growth-at-top is a contra-indicator
-            "rev_growth": 3, "eps_growth": 4,
-            # Cash flow (11) — through-cycle FCF discipline
-            "fcf_yield": 11,
-            # Leverage (11) — survive the down-cycle
+            # 估值 Valuation (32) — EV/EBITDA + P/B are the cyclical comp standard
+            "pe": 3, "pe_fwd": 4, "ps": 3, "pb": 8, "ev_ebitda": 14,
+            # 盈利质量 Profitability (24) — ROIC separates specialty from commodity
+            "eps": 0, "roe": 6, "roic": 10, "gross_margin": 4, "op_margin": 4,
+            # 成长 Growth (8) — EPS-growth-at-top is a contra-indicator
+            "rev_growth": 4, "eps_growth": 4,
+            # 现金流 Cash flow (12) — through-cycle FCF discipline
+            "fcf_yield": 12,
+            # 财务健康 Health (11) — survive the down-cycle
             "de": 5, "interest_cov": 4, "current_ratio": 2,
-            # Shareholder (6)
+            # 股东回报 Shareholder (6)
             "div_yield": 4, "buyback_yield": 2,
-            # Risk (4)
-            "beta": 4,
+            # 风险 Risk (7)
+            "beta": 7,
         },
-        "weight_rationale": "周期股反思：EPS-growth 从 14 砍到 4（周期顶部 EPS 是反向指标）；EV/EBITDA 11 + P/B 7 + ROIC 10 + FCF 11 是通过周期底部的真实信号。",
+        "weight_rationale": "周期股反思：成长仅 8 分（周期顶部 EPS 是反向指标）；EV/EBITDA 14 + P/B 8 + ROIC 10 + FCF 12 才是穿越周期底部的真实信号。PEG 已剔除。",
     },
     "financial": {
         "id": "financial",
@@ -183,29 +185,29 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("保险 / 多元化",     ["BRK-B"]),
             ("加密 / 互联网券商", ["COIN", "HOOD"]),
         ],
-        # Re-derived via 5-panel debate. Banks are P/B × ROE (Penman 1996 RIM
-        # identity: P/B = (ROE − g)/(COE − g)). Quant pushed P/B to 20, Sector to
-        # 14, consensus landed at 16. ROE lifted to 16 (must match P/B to encode
-        # the identity). Beta +3 (2023 SVB lesson). EV/EBITDA / FCF /
-        # interest_cov / current_ratio → 0 (category errors — deposits aren't
-        # debt, ops/financing inseparable).
+        # Banks are P/B × ROE (Penman 1996 RIM identity: P/B = (ROE − g)/(COE − g)),
+        # so P/B and ROE are co-anchored at 18 each to encode the identity. PEG
+        # removed (double-counted growth, and growth is a weak bank signal anyway).
+        # EV/EBITDA / FCF-heavy / interest_cov / current_ratio → 0 (category
+        # errors — deposits aren't debt, ops/financing inseparable). Beta high
+        # (2023 SVB lesson: bank-beta-to-credit-cycle is fundamental).
         "weights": {
-            # Valuation (34) — P/B is THE bank metric
-            "pe": 6, "pe_fwd": 6, "peg_av": 2, "peg_fwd": 4, "ps": 0, "pb": 16, "ev_ebitda": 0,
-            # Profitability (28) — ROE × P/B is the Gordon-growth-via-RIM identity
-            "eps": 3, "roe": 16, "roic": 4, "gross_margin": 0, "op_margin": 5,
-            # Growth (8)
-            "rev_growth": 3, "eps_growth": 5,
-            # Cash flow (3) — banks have no real FCF concept; minimal weight
-            "fcf_yield": 3,
-            # Leverage (4) — most metrics are category errors; only D/E retained
-            "de": 4, "interest_cov": 0, "current_ratio": 0,
-            # Shareholder (15) — capital return is half of total return
-            "div_yield": 8, "buyback_yield": 7,
-            # Risk (8) — 2023 SVB blowup: bank-beta-to-credit-cycle is fundamental
+            # 估值 Valuation (30) — P/B is THE bank metric
+            "pe": 6, "pe_fwd": 6, "ps": 0, "pb": 18, "ev_ebitda": 0,
+            # 盈利质量 Profitability (26) — ROE × P/B is the Gordon-growth-via-RIM identity
+            "eps": 0, "roe": 18, "roic": 4, "gross_margin": 0, "op_margin": 4,
+            # 成长 Growth (10)
+            "rev_growth": 4, "eps_growth": 6,
+            # 现金流 Cash flow (4) — banks have no real FCF concept; minimal weight
+            "fcf_yield": 4,
+            # 财务健康 Health (5) — most metrics are category errors; only D/E retained
+            "de": 5, "interest_cov": 0, "current_ratio": 0,
+            # 股东回报 Shareholder (17) — capital return is half of total return
+            "div_yield": 9, "buyback_yield": 8,
+            # 风险 Risk (8) — 2023 SVB blowup: bank-beta-to-credit-cycle is fundamental
             "beta": 8,
         },
-        "weight_rationale": "P/B × ROE 双锚 (Penman RIM 恒等式)：P/B 16 + ROE 16 共占 32 — 银行估值的代数核心；股息+回购 15 + Beta 8 防 2023 SVB 类型尾部。",
+        "weight_rationale": "P/B × ROE 双锚 (Penman RIM 恒等式)：P/B 18 + ROE 18 共占 36 — 银行估值的代数核心；股息+回购 17 + Beta 8 防 2023 SVB 类型尾部。PEG 已剔除。",
     },
     "biotech": {
         "id": "biotech",
@@ -219,29 +221,29 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("医疗器械 / 诊断",     ["ABT", "TMO", "DHR", "ISRG", "MDT", "BSX"]),
             ("Biotech / 创新药",   ["REGN", "VRTX", "MRNA", "GILD", "AMGN", "BIIB"]),
         ],
-        # Re-derived via 5-panel debate. Biotech cohort is BIMODAL — clinical-
-        # stage cash-burners vs commercial-stage cash machines. Risk panel's
-        # core argument: current_ratio is the binary-survival metric for
-        # clinical-stage names → lifted 2 → 8 (+6). EPS-growth -7 (binary/lumpy
-        # readouts, not smooth). PEG-Fwd -3 (meaningless for pre-revenue).
-        # P/S +3 (useful for pre-rev cohort). EV/EBITDA +4 (catches M&A roll-ups).
+        # Biotech cohort is BIMODAL — clinical-stage cash-burners vs commercial-
+        # stage cash machines. current_ratio is the binary-survival metric for
+        # clinical-stage names (cash runway). Gross margin (80%+ on branded drugs)
+        # is the commercial moat. P/S carries weight (useful for pre-revenue).
+        # PEG removed (meaningless for pre-revenue + double-counts growth);
+        # its weight moved into P/S, EV/EBITDA and the rev-growth ramp signal.
         "weights": {
-            # Valuation (29)
-            "pe": 3, "pe_fwd": 4, "peg_av": 3, "peg_fwd": 7, "ps": 6, "pb": 2, "ev_ebitda": 4,
-            # Profitability (25) — gross margin (80%+ on branded drugs) is the moat
-            "eps": 1, "roe": 4, "roic": 6, "gross_margin": 10, "op_margin": 4,
-            # Growth (14) — ramp validates clinical→commercial conversion
-            "rev_growth": 9, "eps_growth": 5,
-            # Cash flow (8)
+            # 估值 Valuation (27)
+            "pe": 3, "pe_fwd": 5, "ps": 8, "pb": 2, "ev_ebitda": 9,
+            # 盈利质量 Profitability (24) — gross margin is the branded-drug moat
+            "eps": 0, "roe": 4, "roic": 6, "gross_margin": 10, "op_margin": 4,
+            # 成长 Growth (18) — ramp validates clinical→commercial conversion
+            "rev_growth": 11, "eps_growth": 7,
+            # 现金流 Cash flow (8)
             "fcf_yield": 8,
-            # Leverage (15) — cash runway is BINARY SURVIVAL for clinical-stage
-            "de": 4, "interest_cov": 3, "current_ratio": 8,
-            # Shareholder (3)
-            "div_yield": 1, "buyback_yield": 2,
-            # Risk (6)
+            # 财务健康 Health (13) — cash runway is BINARY SURVIVAL for clinical-stage
+            "de": 4, "interest_cov": 1, "current_ratio": 8,
+            # 股东回报 Shareholder (4)
+            "div_yield": 2, "buyback_yield": 2,
+            # 风险 Risk (6)
             "beta": 6,
         },
-        "weight_rationale": "双峰 cohort：商业化阶段看毛利 10 + ROIC 6 + 营收 9；临床阶段看现金跑道 (current_ratio 8) + 杠杆 7 — 总安全权重 15 是所有板块中最高。",
+        "weight_rationale": "双峰 cohort：商业化阶段看毛利 10 + 营收 11 + ROIC 6；临床阶段看现金跑道 (流动比率 8) + 财务健康 13 — 安全权重为各板块最高。PEG 已剔除。",
     },
     "crypto": {
         "id": "crypto",
@@ -300,8 +302,10 @@ METRICS: Dict[str, Dict[str, Any]] = {
     # ── Valuation ────────────────────────────
     "pe":            {"label": "PE (TTM)",        "direction": "lower",  "pct": False, "group": "valuation"},
     "pe_fwd":        {"label": "Fwd PE",          "direction": "lower",  "pct": False, "group": "valuation"},
-    "peg_av":        {"label": "PEG (AV)",        "direction": "lower",  "pct": False, "group": "valuation"},
-    "peg_fwd":       {"label": "PEG (Fwd)",       "direction": "lower",  "pct": False, "group": "valuation"},
+    # NOTE: peg_av / peg_fwd are intentionally NOT scored metrics. PEG = PE ÷
+    # growth, so scoring it double-counts both the 估值 (PE) and 成长 (growth)
+    # dimensions. The raw values are still computed in _normalise_row and shown
+    # as a display-only table column (PEG-Fwd), but they carry zero scoring weight.
     "ps":            {"label": "P/S",             "direction": "lower",  "pct": False, "group": "valuation"},
     "pb":            {"label": "P/B",             "direction": "lower",  "pct": False, "group": "valuation"},
     "ev_ebitda":     {"label": "EV/EBITDA",       "direction": "lower",  "pct": False, "group": "valuation"},
@@ -341,16 +345,19 @@ CRYPTO_METRICS: Dict[str, Dict[str, Any]] = {
 # Metric groups — used to render the expanded-row breakdown.
 METRIC_GROUPS = {
     "valuation":      "估值 · VALUATION",
-    "profitability":  "盈利能力 · PROFITABILITY",
-    "growth":         "成长性 · GROWTH",
+    "profitability":  "盈利质量 · PROFITABILITY",
+    "growth":         "成长 · GROWTH",
     "cash_flow":      "现金流 · CASH FLOW",
-    "leverage":       "杠杆 / 偿债 · LEVERAGE",
+    "leverage":       "财务健康 · FINANCIAL HEALTH",
     "shareholder":    "股东回报 · SHAREHOLDER",
-    "risk":           "风险 · RISK",
+    # Crypto-only groups sit before risk so the crypto dimension order reads
+    # 规模 → 流动 → 动量 → 回撤 → 风险. For stocks these groups are absent, so
+    # risk stays last there too.
     "scale":          "规模 · SCALE",
     "liquidity":      "流动性 · LIQUIDITY",
     "momentum":       "动量 · MOMENTUM",
     "drawdown":       "回撤 · DRAWDOWN",
+    "risk":           "风险 · RISK",
 }
 
 
@@ -1160,8 +1167,25 @@ def score_rows(rows: List[Dict[str, Any]],
             composite = sum(sub[m] * present_weights[m] for m in present_weights) / total_w
             composite = round(composite, 1)
 
+        # Per-dimension (metric group) weighted sub-scores. Drives the sortable
+        # dimension columns in the LEDGER table and the radar profile in the
+        # expanded row. Each group's score = weighted avg of its present metrics'
+        # sub-scores (same weighting the composite uses), so the dimension scores
+        # reconcile with the composite.
+        dim_acc: Dict[str, List[float]] = {}   # group -> [weight_sum, score_sum]
+        for m, cfg in metric_set.items():
+            g = cfg.get("group")
+            sv = sub.get(m)
+            w = weights.get(m, 0)
+            if g and sv is not None and w > 0:
+                acc = dim_acc.setdefault(g, [0.0, 0.0])
+                acc[0] += w
+                acc[1] += sv * w
+        dim_scores = {g: round(v[1] / v[0], 1) for g, v in dim_acc.items() if v[0] > 0}
+
         annotated = dict(r)
         annotated["sub_scores"] = sub
+        annotated["dim_scores"] = dim_scores
         annotated["score"] = composite
         annotated["score_class"] = _score_class(composite)
         out.append(annotated)
@@ -1176,6 +1200,30 @@ def _score_class(s: Optional[float]) -> str:
     if s >= 45:
         return "mid"
     return "high"   # "high" = expensive / weak — keeps CSS vocab (good/mid/high) consistent
+
+
+def _sector_dimensions(sector: Dict[str, Any],
+                       metric_set: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Ordered list of the scoring dimensions (metric groups) that actually
+    carry weight in this sector, each with its total weight.
+
+    Returned in METRIC_GROUPS display order so the frontend can build the
+    dimension columns + radar axes consistently. Short label (the part before
+    "·") is included for compact column headers.
+    """
+    group_weight: Dict[str, int] = {}
+    for m, cfg in metric_set.items():
+        g = cfg.get("group")
+        w = sector["weights"].get(m, 0)
+        if g and w > 0:
+            group_weight[g] = group_weight.get(g, 0) + w
+    out: List[Dict[str, Any]] = []
+    for g, label in METRIC_GROUPS.items():
+        w = group_weight.get(g, 0)
+        if w > 0:
+            short = label.split("·")[0].strip()
+            out.append({"key": g, "label": label, "short": short, "weight": w})
+    return out
 
 
 # ─────────────────────────── sub-sector aggregation ───────────────────────────
@@ -1321,38 +1369,46 @@ def build_commentary(sector: Dict[str, Any],
                 "body": "暂无足够的动量数据。",
             })
     else:
-        inflection = []
+        # 性价比信号 — replaces the old PEG-divergence read (PEG was removed to
+        # stop double-counting growth into valuation). Now uses the clean
+        # dimension scores: find the intersection of CHEAP (估值维度 strong) AND
+        # GROWING / HIGH-QUALITY (成长 or 盈利质量 strong) — i.e. good company at
+        # a good price, which is more robust than cheapness alone.
+        def _dim(r, g):
+            return (r.get("dim_scores") or {}).get(g)
+        bargains = []
         for r in with_score:
-            peg_av = r.get("peg_av")
-            peg_fwd = r.get("peg_fwd")
-            if peg_av is None or peg_fwd is None or peg_fwd <= 0:
+            val = _dim(r, "valuation")
+            upsides = [x for x in (_dim(r, "growth"), _dim(r, "profitability")) if x is not None]
+            if val is None or not upsides:
                 continue
-            # 历史 PEG 远高于前瞻 PEG 且前瞻 PEG < 0.8 → 业绩拐点信号
-            if peg_av >= 1.2 * peg_fwd and peg_fwd < 0.8 and peg_av > 0.8:
-                inflection.append((r, peg_av / peg_fwd))
-        inflection.sort(key=lambda x: x[1], reverse=True)
-        if inflection:
-            top = inflection[:5]
+            upside = max(upsides)
+            if val >= 55 and upside >= 60:
+                bargains.append((r, val + upside, upside))
+        bargains.sort(key=lambda x: x[1], reverse=True)
+        if bargains:
+            top = bargains[:5]
             names = "、".join(
-                f"<strong>{r[0]['ticker']}</strong>（{r[0]['peg_av']:.2f} vs {r[0]['peg_fwd']:.2f}）"
+                f"<strong>{r[0]['ticker']}</strong>（估值分 {_format_score(_dim(r[0], 'valuation'))}"
+                f" · 成长/质量分 {_format_score(r[2])}）"
                 for r in top
             )
             paragraphs.append({
-                "title": "周期拐点信号",
+                "title": "性价比信号",
                 "body": (
-                    f"部分标的 PEG (AV，历史口径) <strong>显著高于</strong> PEG (Forward，前瞻口径) — "
-                    f"这通常意味着公司刚走出业绩低谷、增速正在加速，而 5 年历史 PEG 还没追上 TTM 增速。"
-                    f"典型代表：{names}。这是值得深挖的 <em>业绩拐点</em> 信号，"
-                    f"但还需要核对业绩可持续性、行业景气节奏、个股催化。"
+                    f"以维度分交叉筛选 <strong>估值便宜</strong>（估值维度 ≥55）"
+                    f"<strong>且 成长/盈利质量强</strong>（≥60）的标的 — 这是"
+                    f"<em>好公司 + 好价格</em> 的交集，比单看估值更稳健。"
+                    f"典型代表：{names}。仍需核对业绩可持续性、行业景气节奏、个股催化。"
                 ),
             })
         else:
             paragraphs.append({
-                "title": "周期拐点信号",
+                "title": "性价比信号",
                 "body": (
-                    f"当前 {sector_name} 没有出现明显的 PEG-AV ≫ PEG-Fwd 背离信号 — "
-                    f"前瞻 PEG 与历史 PEG 总体一致，意味着市场已经把增速变化定价。"
-                    f"想要捕捉拐点机会，建议关注下一份财报后的口径切换。"
+                    f"当前 {sector_name} 没有同时满足 <em>估值便宜 + 成长/质量强</em> 的标的 — "
+                    f"便宜的多半偏弱、强的多半偏贵，性价比交集为空。"
+                    f"此时要在「为成长付溢价」与「守住估值」之间做取舍，不宜两头都要。"
                 ),
             })
 
@@ -1381,46 +1437,33 @@ def build_commentary(sector: Dict[str, Any],
             })
         return paragraphs
 
-    eligible = [r for r in with_score
-                if r.get("peg_fwd") is not None and r["peg_fwd"] > 0]
-    eligible.sort(key=lambda r: r["peg_fwd"])
-    top_picks = eligible[:3]
-    if top_picks:
+    top_by_score = sorted(with_score, key=lambda r: r.get("score") or 0, reverse=True)[:3]
+    if top_by_score:
         items = []
-        for r in top_picks:
-            eps_str = _format_pct(r.get("eps_growth"))
+        for r in top_by_score:
+            ds = r.get("dim_scores") or {}
+            best_str = ""
+            if ds:
+                bk, bv = max(ds.items(), key=lambda kv: kv[1])
+                short = METRIC_GROUPS.get(bk, bk).split("·")[0].strip()
+                best_str = f"，最强 {short} {bv:.0f}"
             items.append(
-                f"<strong>{r['ticker']}</strong>（PEG-Fwd {r['peg_fwd']:.2f}，"
-                f"EPS YoY {eps_str}，综合分 {_format_score(r.get('score'))}）"
+                f"<strong>{r['ticker']}</strong>（综合分 {_format_score(r.get('score'))}{best_str}）"
             )
         paragraphs.append({
             "title": "关注度优先级",
             "body": (
-                f"按 PEG-Forward 升序，赔率最高的三个标的为 {'、'.join(items)}。"
-                f"<em>提示</em>：这只是估值角度的便宜信号，必须结合业绩可持续性、"
-                f"行业景气节奏、个股催化做二次筛选。下方表格支持按任意列排序 + 子板块过滤。"
+                f"按综合分排序，本期最值得重点观察：{'、'.join(items)}。"
+                f"<em>提示</em>：综合分是板块内百分位加权的<strong>相对强弱</strong>，"
+                f"不等于绝对买入信号 — 必须结合业绩可持续性、行业景气节奏、个股催化做二次筛选。"
+                f"下方表格支持按综合分或<strong>任意维度分</strong>排序 + 子板块过滤。"
             ),
         })
     else:
-        # No positive-growth picks — describe top by composite score instead.
-        fallback = sorted(with_score, key=lambda r: r["score"], reverse=True)[:3]
-        if fallback:
-            items = "、".join(
-                f"<strong>{r['ticker']}</strong>（综合分 {_format_score(r.get('score'))}）"
-                for r in fallback
-            )
-            paragraphs.append({
-                "title": "关注度优先级",
-                "body": (
-                    f"本板块缺少正向 EPS 增长的标的，PEG-Fwd 信号缺失。"
-                    f"退一步按综合分挑选：{items}。表格支持按任意列排序 + 子板块过滤。"
-                ),
-            })
-        else:
-            paragraphs.append({
-                "title": "关注度优先级",
-                "body": "暂无可用打分数据，请刷新或稍后重试。",
-            })
+        paragraphs.append({
+            "title": "关注度优先级",
+            "body": "暂无可用打分数据，请刷新或稍后重试。",
+        })
 
     return paragraphs
 
@@ -1485,8 +1528,10 @@ def build_sector_payload(sector_id: str, force: bool = False) -> Dict[str, Any]:
     sub_stats = _sub_sector_stats(sector, ranked)
     commentary = build_commentary(sector, ranked, stats, sub_stats)
 
-    # Top / bottom picks.
-    top_picks = ranked[:5]
+    # Top picks — now top-10 (the LEDGER section shows strongest only; the
+    # "weakest" column was removed). bottom_picks kept for the cross-sector
+    # MACRO strip (which still surfaces each sector's worst name).
+    top_picks = ranked[:10]
     bottom_picks = list(reversed(with_score))[:5]
 
     payload = {
@@ -1503,6 +1548,7 @@ def build_sector_payload(sector_id: str, force: bool = False) -> Dict[str, Any]:
         },
         "metrics_meta": metric_set,
         "metric_groups": METRIC_GROUPS,
+        "dimensions": _sector_dimensions(sector, metric_set),
         "rows": ranked,
         "top_picks": top_picks,
         "bottom_picks": bottom_picks,
