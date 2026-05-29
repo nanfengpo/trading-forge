@@ -87,13 +87,60 @@
     return e;
   }
 
-  // ─────────── network ───────────
-  async function fetchOverview(force) {
+  // ─────────── network (timeout + retry + stale-while-revalidate) ───────────
+  // Root-cause fix for "data won't load right after a deploy": the backend
+  // restarts with an empty cache, so its first request does a slow cold fetch
+  // of ~130 live tickers. We (1) time-box + retry each request so a cold/
+  // restarting backend self-heals instead of hanging, and (2) cache the last
+  // good payload in localStorage so a returning visitor sees the dashboard
+  // INSTANTLY and the fresh data swaps in when the network call resolves.
+  function fetchJSON(url, opts) {
+    opts = opts || {};
+    const timeoutMs = opts.timeoutMs || 22000;
+    const tries = opts.tries || 4;
+    const backoff = [1200, 2500, 4000, 6000];
+    return (async () => {
+      let lastErr;
+      for (let i = 0; i < tries; i++) {
+        if (opts.onAttempt) opts.onAttempt(i + 1, tries);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+          const r = await fetch(url, { signal: ctrl.signal });
+          clearTimeout(timer);
+          if (!r.ok) throw new Error("http " + r.status);
+          return await r.json();
+        } catch (e) {
+          clearTimeout(timer);
+          lastErr = e;
+          if (i < tries - 1) await new Promise(res => setTimeout(res, backoff[i] || 6000));
+        }
+      }
+      throw lastErr || new Error("fetch failed");
+    })();
+  }
+
+  const LS_PREFIX = "fund2cache:v1:";
+  const LS_TTL_MS = 24 * 3600 * 1000;   // show last-known data for up to a day
+  function lsSave(key, data) {
+    try { localStorage.setItem(LS_PREFIX + key, JSON.stringify({ t: Date.now(), data: data })); }
+    catch (e) { /* quota / private mode — ignore */ }
+  }
+  function lsLoad(key) {
+    try {
+      const raw = localStorage.getItem(LS_PREFIX + key);
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      if (!o || !o.data || (Date.now() - (o.t || 0)) > LS_TTL_MS) return null;
+      return o.data;
+    } catch (e) { return null; }
+  }
+
+  async function fetchOverview(force, onAttempt) {
     if (!force && overviewData) return overviewData;
     const url = API_BASE + "/api/fundamentals/_overview" + (force ? "?force=true" : "");
-    const r = await fetch(url);
-    if (!r.ok) throw new Error("overview http " + r.status);
-    overviewData = await r.json();
+    overviewData = await fetchJSON(url, { onAttempt: onAttempt });
+    lsSave("_overview", overviewData);
     return overviewData;
   }
   async function fetchSector(id, opts) {
@@ -101,20 +148,20 @@
     if (!opts.force && cache[id]) return cache[id];
     const url = API_BASE + "/api/fundamentals/" + encodeURIComponent(id)
       + (opts.force ? "?force=true" : "");
-    const r = await fetch(url);
-    if (!r.ok) throw new Error("sector " + id + " http " + r.status);
-    const j = await r.json();
+    const j = await fetchJSON(url, { onAttempt: opts.onAttempt });
     cache[id] = j;
+    lsSave("sector:" + id, j);
     return j;
   }
 
   // ─────────── MACRO row ───────────
-  function renderMacro() {
+  function renderMacro(ov) {
+    ov = ov || overviewData;
     const wrap = document.getElementById("fund2-macro");
-    if (!wrap || !overviewData) return;
+    if (!wrap || !ov) return;
     wrap.innerHTML = "";
 
-    const sectors = overviewData.sectors || [];
+    const sectors = ov.sectors || [];
     sectors.forEach(s => {
       const total = (s.good || 0) + (s.mid || 0) + (s.high || 0);
       const goodPct = total ? (s.good / total) * 100 : 0;
@@ -190,8 +237,8 @@
     // stamp updated time
     const upd = document.getElementById("fund2-updated");
     if (upd) {
-      upd.textContent = (overviewData.generated_at || "—")
-        + (overviewData.data_source === "no_api_key" ? "  ⚠ 缺 ALPHA_VANTAGE_API_KEY" : "");
+      upd.textContent = (ov.generated_at || "—")
+        + (ov.data_source === "no_api_key" ? "  ⚠ 缺 ALPHA_VANTAGE_API_KEY" : "");
     }
   }
 
@@ -1438,14 +1485,23 @@
   }
 
   // ─────────── sector switch + orchestration ───────────
-  async function selectSector(id, opts) {
-    opts = opts || {};
-    currentSector = id;
-    renderMacro();
+  function renderSector(payload) {
+    renderCommentary(payload);
+    renderSectorCard(payload);
+    renderDistribution(payload);
+    renderSubsecChart(payload);
+    renderScatterChart(payload);
+    renderPicks(payload);
+    bindTableEvents(payload);
+    applyTable(payload);
     const hint = document.getElementById("fund2-deep-hint");
+    if (hint) hint.textContent = (payload.sector && payload.sector.name) || "";
+  }
 
+  function showSectorSkeletons(id) {
     const card = document.getElementById("fund2-sector-card");
     if (card) card.innerHTML = '<div class="fund2-skel">加载 ' + id + ' 板块数据…</div>';
+    const hint = document.getElementById("fund2-deep-hint");
     if (hint) hint.textContent = "加载中…";
     const top = document.getElementById("fund2-top");
     const tbody = document.getElementById("fund2-tbody");
@@ -1454,27 +1510,46 @@
     if (com) com.innerHTML = '<div class="fund2-skel">加载中…</div>';
     if (tbody) tbody.innerHTML =
       '<tr><td colspan="20" class="muted" style="text-align:center;padding:32px;">加载中…</td></tr>';
+  }
 
-    try {
-      const payload = await fetchSector(id, opts);
-      if (payload && payload.error) throw new Error(payload.error);
-      // reset table state when switching sectors
+  async function selectSector(id, opts) {
+    opts = opts || {};
+    currentSector = id;
+    renderMacro();
+
+    // Stale-while-revalidate: paint any payload we already have (this-session
+    // memory cache, else the localStorage seed) IMMEDIATELY so the user never
+    // stares at an empty page while the backend warms up. NOTE: we deliberately
+    // do NOT promote the localStorage seed into `cache[id]`, so the fetch below
+    // still revalidates against the network.
+    const seed = (!opts.force && cache[id]) || (!opts.force && lsLoad("sector:" + id));
+    if (seed && !seed.error) {
       tableState.expanded.clear();
       tableState.subsecFilter = "";
-      renderCommentary(payload);
-      renderSectorCard(payload);
-      renderDistribution(payload);
-      renderSubsecChart(payload);
-      renderScatterChart(payload);
-      renderPicks(payload);
-      bindTableEvents(payload);
-      applyTable(payload);
-      if (hint) hint.textContent = (payload.sector && payload.sector.name) || id;
+      renderSector(seed);
+    } else {
+      showSectorSkeletons(id);
+    }
+
+    try {
+      const payload = await fetchSector(id, { force: opts.force, onAttempt: opts.onAttempt });
+      if (payload && payload.error) throw new Error(payload.error);
+      if (!seed) { tableState.expanded.clear(); tableState.subsecFilter = ""; }
+      renderSector(payload);
     } catch (e) {
       console.error("[fund] sector " + id + " failed:", e);
-      if (card) card.innerHTML =
-        '<div class="callout warn"><strong>加载失败</strong>：' + (e.message || e) + '</div>';
-      if (hint) hint.textContent = "加载失败";
+      if (!seed) {
+        const card = document.getElementById("fund2-sector-card");
+        if (card) card.innerHTML =
+          '<div class="callout warn"><strong>加载失败</strong>：' + (e.message || e)
+          + ' &nbsp;<button class="btn secondary small" id="fund2-retry-sector">重试</button></div>';
+        const rb = document.getElementById("fund2-retry-sector");
+        if (rb) rb.onclick = () => selectSector(id, opts);
+        const hint = document.getElementById("fund2-deep-hint");
+        if (hint) hint.textContent = "加载失败";
+      } else {
+        console.warn("[fund] revalidate failed for " + id + " — keeping cached view");
+      }
     }
   }
 
@@ -1488,30 +1563,54 @@
       refreshBtn.textContent = "刷新中…";
       refreshBtn.disabled = true;
       try {
-        Object.keys(cache).forEach(k => delete cache[k]);
         overviewData = null;
+        Object.keys(cache).forEach(k => delete cache[k]);
         await fetchOverview(true);
         renderMacro();
         if (currentSector) await selectSector(currentSector, { force: true });
+      } catch (e) {
+        console.warn("[fund] manual refresh failed:", e);
       } finally {
         refreshBtn.textContent = "↻ 刷新全部";
         refreshBtn.disabled = false;
       }
     };
 
+    // 1) Instant paint from the last-known snapshot (stale-while-revalidate) so
+    //    a returning visitor never sees an empty page — even right after a
+    //    deploy while the backend is still warming its cache.
+    const cachedOv = lsLoad("_overview");
+    let painted = false;
+    if (cachedOv && cachedOv.sectors && cachedOv.sectors.length) {
+      currentSector = (cachedOv.sectors[0] && cachedOv.sectors[0].id) || "ai";
+      renderMacro(cachedOv);   // paint WITHOUT promoting into the session cache
+      const cachedSec = lsLoad("sector:" + currentSector);
+      if (cachedSec && !cachedSec.error) { renderSector(cachedSec); painted = true; }
+    }
+
+    // 2) Revalidate from the network (timeout + retry). Show a "warming up"
+    //    message only when there's nothing painted to look at.
+    const onAttempt = (n, tries) => {
+      if (painted || n === 1) return;
+      const macro = document.getElementById("fund2-macro");
+      if (macro && !overviewData) macro.innerHTML =
+        '<div class="fund2-macro-loading">服务预热中，正在重试 (' + n + '/' + tries + ')…</div>';
+    };
     try {
-      // First mount: also force the cache to behave like a refresh — the user
-      // wants "每次进入页面或者手动点击刷新时更新最新数据".
-      const ov = await fetchOverview();
-      currentSector = (ov.sectors && ov.sectors[0] && ov.sectors[0].id) || "ai";
+      const ov = await fetchOverview(false, onAttempt);
+      currentSector = currentSector || (ov.sectors && ov.sectors[0] && ov.sectors[0].id) || "ai";
       renderMacro();
       await selectSector(currentSector);
     } catch (e) {
       console.error("[fund] init failed:", e);
-      const macro = document.getElementById("fund2-macro");
-      if (macro) macro.innerHTML =
-        '<div class="callout warn" style="margin:8px;"><strong>无法加载基本面看板</strong>：'
-        + (e.message || e) + '</div>';
+      if (!painted) {
+        const macro = document.getElementById("fund2-macro");
+        if (macro) macro.innerHTML =
+          '<div class="callout warn" style="margin:8px;"><strong>暂时无法加载</strong>：服务可能正在启动，请稍候。 '
+          + '&nbsp;<button class="btn secondary small" id="fund2-retry-init">重试</button></div>';
+        const rb = document.getElementById("fund2-retry-init");
+        if (rb) rb.onclick = () => { initialised = false; init(); };
+      }
     }
   }
 
