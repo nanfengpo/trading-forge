@@ -132,6 +132,26 @@
     return true;  // default: collapsed
   }
 
+  // Whole-report collapsed-state preference, keyed by ticker. Lets the user
+  // collapse the entire 综合报告 block down to just its header bar so the
+  // watchlist detail pane (price + latest decision) gets the full height.
+  // Default = expanded (the report is the page's headline feature); the key
+  // only stores explicit overrides.
+  const _REPORT_KEY = "tda:comp-report-collapsed";
+  function _readReportPrefs() {
+    try { return JSON.parse(localStorage.getItem(_REPORT_KEY) || "{}"); }
+    catch { return {}; }
+  }
+  function _writeReportPrefs(map) {
+    try { localStorage.setItem(_REPORT_KEY, JSON.stringify(map || {})); }
+    catch (e) { console.warn("comp-report collapse prefs save failed", e); }
+  }
+  function _isReportCollapsed(ticker) {
+    const k = (ticker || "").toUpperCase();
+    const prefs = _readReportPrefs();
+    return !!prefs[k];  // default: expanded
+  }
+
   /** How many tickers currently have an in-flight generation. Used by the
    *  global indicator that surfaces concurrent runs even when the user has
    *  switched to a different ticker / tab. */
@@ -374,6 +394,25 @@
       });
     },
 
+    /** Collapse / expand the ENTIRE comprehensive-report block down to just its
+     *  header bar. Persists per-ticker in localStorage. DOM-surgical (same
+     *  flicker-free approach as toggleSidebar): we only flip the `.collapsed`
+     *  class on the mounted block + the chevron, never rewrite innerHTML. */
+    toggleReport(ticker) {
+      const tu = (ticker || "").toUpperCase();
+      const map = _readReportPrefs();
+      const next = !_isReportCollapsed(tu);
+      map[tu] = next;
+      _writeReportPrefs(map);
+      document.querySelectorAll(`.wl-comp-mount[data-ticker="${tu}"] .comp-block`).forEach(block => {
+        block.classList.toggle("collapsed", next);
+        block.querySelectorAll("[data-comp-collapse]").forEach(btn => {
+          btn.title = next ? "展开综合报告" : "收起综合报告";
+          btn.setAttribute("aria-expanded", String(!next));
+        });
+      });
+    },
+
     async togglePinned(ticker, versionId) {
       const tu = (ticker || "").toUpperCase();
       const st = _getState(tu);
@@ -608,7 +647,8 @@
            </div>`
         : `<div class="comp-main">${mainBody}</div>`;
 
-      return `<div class="comp-block" data-status="${esc(status)}">${head}${body}</div>`;
+      const reportCollapsed = _isReportCollapsed(ticker);
+      return `<div class="comp-block${reportCollapsed ? " collapsed" : ""}" data-status="${esc(status)}">${head}${body}</div>`;
     },
 
     _headHTML(ticker, row, isReady, isGenerating, isError, st) {
@@ -633,8 +673,14 @@
           <button class="btn primary tiny comp-regen-btn">⚡ 生成综合报告</button>`;
       }
 
+      const reportCollapsed = _isReportCollapsed(ticker);
       return `
         <div class="comp-head">
+          <button class="comp-collapse-btn" data-comp-collapse="${esc(ticker)}"
+                  title="${reportCollapsed ? "展开综合报告" : "收起综合报告"}"
+                  aria-expanded="${reportCollapsed ? "false" : "true"}">
+            <span class="comp-collapse-icon" aria-hidden="true">▾</span>
+          </button>
           <h3 class="comp-title">📊 综合报告</h3>
           <div class="comp-head-right">${buttons}</div>
         </div>`;
@@ -950,6 +996,13 @@
         b.addEventListener("click", (ev) => {
           ev.stopPropagation();
           this.toggleSidebar(b.dataset.compSidebarToggle);
+        });
+      });
+      // Whole-report collapse toggle (header chevron).
+      container.querySelectorAll("[data-comp-collapse]").forEach(b => {
+        b.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this.toggleReport(b.dataset.compCollapse);
         });
       });
     },

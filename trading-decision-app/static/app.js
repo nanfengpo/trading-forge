@@ -3158,6 +3158,15 @@ const Watchlist = {
     this._wireSymbolSearch();
     document.getElementById("watchlist-import-history").addEventListener("click", () => this.importFromHistory());
 
+    // Collapse / expand the whole watchlist sidebar so the selected ticker's
+    // detail pane can use the full page width.
+    this.shellEl = document.querySelector(".watchlist-shell");
+    this.collapseBtn = document.getElementById("watchlist-collapse-btn");
+    if (this.collapseBtn) {
+      this.collapseBtn.addEventListener("click", () => this.toggleSidebar());
+      this._applySidebarPref();
+    }
+
     if (window.Auth) window.Auth.onChange(() => this.refresh(true));
     this.refresh(true);
     // Auto-refresh quotes every 60s while page is active
@@ -3195,6 +3204,32 @@ const Watchlist = {
     // Watchlist may not have loaded yet — wait one tick.
     setTimeout(tryApply, 200);
     setTimeout(tryApply, 800);
+  },
+
+  // ---- sidebar collapse (give the detail pane the full width) -------------
+  SIDEBAR_KEY: "tda:wl-sidebar-hidden",
+  _sidebarHidden() {
+    try { return localStorage.getItem(this.SIDEBAR_KEY) === "1"; }
+    catch { return false; }
+  },
+  _paintCollapseBtn(hidden) {
+    if (!this.collapseBtn) return;
+    this.collapseBtn.textContent = hidden ? "▶ 展开列表" : "◀ 收起列表";
+    this.collapseBtn.title = hidden ? "展开自选列表" : "收起自选列表，给详情更多空间";
+    this.collapseBtn.setAttribute("aria-expanded", String(!hidden));
+  },
+  _applySidebarPref() {
+    const hidden = this._sidebarHidden();
+    if (this.shellEl) this.shellEl.classList.toggle("sidebar-hidden", hidden);
+    this._paintCollapseBtn(hidden);
+  },
+  /** Toggle (or force) the collapsed state of the watchlist sidebar. Persists
+   *  in localStorage so the choice survives reloads. */
+  toggleSidebar(force) {
+    const hidden = (force != null) ? !!force : !this._sidebarHidden();
+    try { localStorage.setItem(this.SIDEBAR_KEY, hidden ? "1" : "0"); } catch (e) { /* non-fatal */ }
+    if (this.shellEl) this.shellEl.classList.toggle("sidebar-hidden", hidden);
+    this._paintCollapseBtn(hidden);
   },
 
   _toggleAddForm(show) {
@@ -3533,6 +3568,10 @@ const Watchlist = {
     } else {
       this.cache = this._readLocal();
     }
+    // Reconcile the source list with the user's client-side pin choices before
+    // the first paint so pinned tickers float to the top regardless of whether
+    // the Supabase is_pinned column exists.
+    this._applyPins();
     this.render();
     // Keep the Decisions page's "标的" filter in sync with the watchlist.
     if (typeof DecisionsPage !== "undefined" && DecisionsPage.tickerWrapEl) {
@@ -3743,10 +3782,13 @@ const Watchlist = {
             data-id="${e.id}" data-ticker="${escapeHtml(e.ticker)}"
             data-pinned="${pinned ? "1" : "0"}" draggable="true">
           <span class="wl-side-drag" title="拖动以排序">⠿</span>
-          <button class="wl-side-pin ${pinned ? "on" : ""}" data-wl-pin="${e.id}" title="${pinned ? "取消置顶" : "置顶"}">${pinned ? "📌" : "📍"}</button>
           <span class="wl-side-ticker">${escapeHtml(e.ticker)}${nameSub ? `<span class="wl-name">${escapeHtml(nameSub)}</span>` : ""}</span>
           <span class="wl-side-price">${fmt(q.price)}</span>
           <span class="wl-side-pct ${dirCls}">${fmtPct(pct)}</span>
+          <span class="wl-side-actions">
+            <button class="wl-side-pin ${pinned ? "on" : ""}" data-wl-pin="${e.id}" title="${pinned ? "取消置顶" : "置顶"}" aria-label="${pinned ? "取消置顶" : "置顶"}">${pinned ? "📌" : "📍"}</button>
+            <button class="wl-side-del" data-wl-del="${e.id}" title="从自选中移除" aria-label="移除 ${escapeHtml(e.ticker)}">✕</button>
+          </span>
         </li>`;
     }).join("");
 
@@ -3816,7 +3858,6 @@ const Watchlist = {
         </div>
         <div class="wl-main-actions">
           <button class="btn primary small" data-main-act="run">▶ 启动新决策</button>
-          <button class="btn secondary small" data-main-act="del">🗑 移除</button>
         </div>
       </div>`;
 
@@ -3906,10 +3947,10 @@ const Watchlist = {
   },
 
   _wireRows() {
-    // Row click → select (ignored when clicking the pin button or drag handle).
+    // Row click → select (ignored when clicking the per-row actions or drag handle).
     this.listEl.querySelectorAll(".watchlist-row").forEach(li => {
       li.addEventListener("click", (ev) => {
-        if (ev.target.closest(".wl-side-pin, .wl-side-drag")) return;
+        if (ev.target.closest(".wl-side-actions, .wl-side-drag")) return;
         const id = li.dataset.id;
         if (this.selectedId === id) return;
         this.selectedId = id;
@@ -3926,6 +3967,13 @@ const Watchlist = {
         await this._togglePin(btn.dataset.wlPin);
       });
     });
+    // Per-row remove button (moved here from the main panel header).
+    this.listEl.querySelectorAll("[data-wl-del]").forEach(btn => {
+      btn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        await this._removeEntry(btn.dataset.wlDel);
+      });
+    });
     // Drag-to-reorder (within the same pinned/unpinned group).
     this.listEl.querySelectorAll(".watchlist-row").forEach(li => {
       li.addEventListener("dragstart", (ev) => this._onDragStart(ev, li));
@@ -3936,6 +3984,38 @@ const Watchlist = {
     });
   },
 
+  // ---- pin state (client-authoritative) -----------------------------------
+  // REDO (2026-05-29): pinning used to be persisted *only* to Supabase
+  // (`watchlist.is_pinned`, migration 0009). When that migration wasn't applied
+  // the column was missing, auth.js silently stripped the field, and pinning
+  // appeared to do nothing ("置顶功能无效"). We now keep an authoritative
+  // client-side pin map in localStorage so pinning ALWAYS works — signed in or
+  // out, column present or not. The Supabase column is still written
+  // best-effort so cross-device sync keeps working wherever 0009 *was* applied.
+  PIN_KEY: "tda:wl-pins",        // { "NVDA": true, "AAPL": false, … }
+  _readPins() {
+    try { return JSON.parse(localStorage.getItem(this.PIN_KEY) || "{}"); }
+    catch { return {}; }
+  },
+  _writePins(map) {
+    try { localStorage.setItem(this.PIN_KEY, JSON.stringify(map || {})); }
+    catch (e) { console.warn("wl pins save failed", e); }
+  },
+  /** Merged pin state for an entry: explicit local override wins, else the
+   *  remote `is_pinned` (so devices where 0009 *is* applied still sync). */
+  _pinStateFor(entry) {
+    const pins = this._readPins();
+    const k = (entry.ticker || "").toUpperCase();
+    if (Object.prototype.hasOwnProperty.call(pins, k)) return !!pins[k];
+    return !!entry.is_pinned;
+  },
+  /** Overlay the local pin map onto the cache so _sorted()/render() see it.
+   *  Called from refresh() right before render so the source data (remote or
+   *  localStorage list) is always reconciled with the user's pin choices. */
+  _applyPins() {
+    this.cache.forEach(e => { e.is_pinned = this._pinStateFor(e); });
+  },
+
   // ---- pin / drag ---------------------------------------------------------
 
   async _togglePin(id) {
@@ -3943,26 +4023,19 @@ const Watchlist = {
     const entry = this.cache.find(e => e.id === id);
     if (!entry) return;
     const newVal = !entry.is_pinned;
-    // Optimistic local update so the UI feels instant.
+    // Optimistic in-memory flip so the row re-sorts instantly.
     entry.is_pinned = newVal;
-    // Pinning bumps to the top of its pool — assign a fresh sort_order so the
-    // user's intent ("most recently pinned floats up") matches what they see.
-    entry.sort_order = newVal ? -Date.now() : Date.now();
-    // Persist
+    // Authoritative client-side pin state — survives a missing Supabase column.
+    const pins = this._readPins();
+    pins[(entry.ticker || "").toUpperCase()] = newVal;
+    this._writePins(pins);
+    // Best-effort cross-device sync. No-op when the is_pinned column hasn't
+    // been migrated (auth.js strips the field); failures are non-fatal because
+    // the local pin map above is the real source of truth.
     if (this._useRemote()) {
-      await window.Watchlist.update(id, { is_pinned: newVal, sort_order: entry.sort_order });
-    } else {
-      const all = this._readLocal();
-      const idx = all.findIndex(x => x.id === id);
-      if (idx >= 0) {
-        all[idx].is_pinned = newVal;
-        all[idx].sort_order = entry.sort_order;
-        localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all));
-      }
+      try { await window.Watchlist.update(id, { is_pinned: newVal }); }
+      catch (e) { /* ignore — local pin map already persisted */ }
     }
-    // Normalise sort_order across the pool so future drags work from a clean
-    // sequence (0,1,2,…). Fire-and-forget — best effort.
-    this._normaliseSortOrder().catch(e => console.warn("normalise order", e));
     this.render();
   },
 
@@ -4041,16 +4114,23 @@ const Watchlist = {
     }
   },
 
-  /** Normalise sort_order 0,1,2,… across pinned + unpinned pools so the
-   *  numbers don't drift to wild ranges after many pin/unpin operations. */
-  async _normaliseSortOrder() {
-    const sorted = this._sorted(this.cache);
-    let pinSeq = 0, unpinSeq = 0;
-    sorted.forEach(e => {
-      if (e.is_pinned) e.sort_order = pinSeq++;
-      else             e.sort_order = unpinSeq++;
-    });
-    await this._persistOrder();
+  /** Remove a ticker from the watchlist. Shared by the per-row ✕ button and
+   *  any legacy main-panel delete affordance. Also drops the local pin entry
+   *  so a re-added ticker starts unpinned. */
+  async _removeEntry(id) {
+    const entry = this.cache.find(e => e.id === id);
+    if (!entry) return;
+    if (!confirm(`从自选中移除 ${entry.ticker}？`)) return;
+    if (this._useRemote()) await window.Watchlist.remove(id);
+    else {
+      const all = this._readLocal().filter(x => x.id !== id);
+      localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all));
+    }
+    const pins = this._readPins();
+    const k = (entry.ticker || "").toUpperCase();
+    if (Object.prototype.hasOwnProperty.call(pins, k)) { delete pins[k]; this._writePins(pins); }
+    if (this.selectedId === id) this.selectedId = null;
+    await this.refresh();
   },
 
   _wireMain(entry) {
@@ -4062,14 +4142,7 @@ const Watchlist = {
         if (act === "run") {
           openDecisionFor(entry.ticker);
         } else if (act === "del") {
-          if (!confirm(`从自选中移除 ${entry.ticker}？`)) return;
-          if (this._useRemote()) await window.Watchlist.remove(entry.id);
-          else {
-            const all = this._readLocal().filter(x => x.id !== entry.id);
-            localStorage.setItem(this.LOCAL_KEY, JSON.stringify(all));
-          }
-          if (this.selectedId === entry.id) this.selectedId = null;
-          await this.refresh();
+          await this._removeEntry(entry.id);
         } else if (act === "open-decision") {
           // Watchlist's "latest decision" card → jump to unified 决策 tab and
           // select that row so the full cockpit (including the multi-horizon

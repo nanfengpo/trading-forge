@@ -1361,6 +1361,10 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   display: grid; grid-template-columns: 272px 1fr; gap: 16px;
   align-items: start;
 }
+/* Collapsed sidebar: the detail pane takes the full page width. Toggled by
+   the「收起列表」button in the watchlist header (state persisted). */
+.watchlist-shell.sidebar-hidden { grid-template-columns: 1fr; }
+.watchlist-shell.sidebar-hidden > .watchlist-sidebar { display: none; }
 .watchlist-sidebar {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 12px; overflow: hidden;
@@ -1371,9 +1375,11 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 .watchlist-empty:empty { display: none; }
 .watchlist-list { list-style: none; margin: 0; padding: 0; }
 
-/* Sidebar row: drag-handle / pin / ticker / price / pct (5 cols). */
+/* Sidebar row: drag-handle / ticker / price / pct / actions (5 cols).
+   Actions (pin + remove) live in a trailing group so each ticker carries its
+   own 置顶 / 移除 controls. */
 .watchlist-row {
-  display: grid; grid-template-columns: auto auto 1fr auto auto;
+  display: grid; grid-template-columns: auto 1fr auto auto auto;
   gap: 6px; align-items: center;
   padding: 10px 12px; border-bottom: 1px solid var(--border);
   cursor: pointer; transition: background 0.1s, opacity 0.1s;
@@ -1412,17 +1418,26 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
 .watchlist-row:hover .wl-side-drag { opacity: 0.85; }
 .watchlist-row.dragging .wl-side-drag { cursor: grabbing; }
 
-.wl-side-pin {
+/* Trailing per-row actions: pin + remove. Stay out of the way (hidden) until
+   the row is hovered or selected; a pinned row keeps its 📌 visible so pin
+   state reads at a glance. */
+.wl-side-actions { display: inline-flex; align-items: center; gap: 1px; }
+.wl-side-pin, .wl-side-del {
   background: transparent; border: none; cursor: pointer;
-  font-size: 13px; padding: 1px 4px; border-radius: 4px;
-  opacity: 0.35;
-  transition: opacity 0.12s, background 0.12s;
-  color: var(--text-muted);
-  line-height: 1;
+  font-size: 12px; padding: 2px 5px; border-radius: 5px;
+  line-height: 1; color: var(--text-muted);
+  opacity: 0; transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
-.watchlist-row:hover .wl-side-pin { opacity: 0.85; }
-.wl-side-pin.on { opacity: 1; }
-.wl-side-pin:hover { background: var(--bg); }
+.watchlist-row:hover .wl-side-pin,
+.watchlist-row:hover .wl-side-del,
+.watchlist-row.selected .wl-side-pin,
+.watchlist-row.selected .wl-side-del { opacity: 0.7; }
+.wl-side-pin.on { opacity: 1; }                       /* pinned → always visible */
+.wl-side-pin:hover { background: var(--bg); opacity: 1; color: #b89030; }
+.wl-side-del:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  opacity: 1; color: var(--danger);
+}
 
 .wl-side-ticker  { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .wl-side-ticker .wl-name { display: block; font-size: 11px; color: var(--text-muted); font-weight: 400; margin-top: 1px; }
@@ -2913,6 +2928,22 @@ footer { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--border
   flex-wrap: wrap;
 }
 .comp-meta { color: var(--text-muted); font-size: 11px; }
+
+/* Whole-report collapse: chevron at the head collapses everything below the
+   head bar (history grid + body) to a single line. */
+.comp-collapse-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-muted); cursor: pointer;
+  width: 24px; height: 24px; border-radius: 6px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; transition: background 0.12s, color 0.12s;
+}
+.comp-collapse-btn:hover { background: var(--bg-soft); color: var(--text); }
+.comp-collapse-icon { font-size: 12px; line-height: 1; transition: transform 0.15s; }
+.comp-block.collapsed .comp-collapse-icon { transform: rotate(-90deg); }
+.comp-block.collapsed { padding-bottom: 18px; }
+.comp-block.collapsed .comp-head { margin-bottom: 0; }
+.comp-block.collapsed > :not(.comp-head) { display: none; }
 
 .btn.tiny { padding: 4px 10px; font-size: 11px; border-radius: 6px; }
 
