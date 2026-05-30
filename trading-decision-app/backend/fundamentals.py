@@ -76,26 +76,36 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("AI软件/应用",        ["PLTR", "CRM", "NOW", "SNOW", "PANW", "CRWD", "ADBE", "INTU"]),
             ("AI终端/边缘",        ["AAPL", "TSLA"]),
         ],
-        # weights MUST sum to 100. Dimensions are now CLEAN (no metric counted
-        # twice): PEG removed from scoring entirely — it embedded growth into
-        # the valuation axis, double-counting against the dedicated 成长 block.
-        # Freed PEG weight (was 18) redistributed to pure multiples + growth +
-        # ROIC. Growth-tilted cohort (most names compound on revenue, not yield).
+        # ── V2.0 因子正交化权重 ──────────────────────────────────────────
+        # weights MUST sum to 100. V2.0 用 Barra 风格「风格因子」分组，先在
+        # 因子层定权重再向因子内指标分配 —— 这样高度相关的盈利能力指标
+        # (ROIC/ROE/经营利润率) 被锁在 质量因子(18) 内，不会像 V1 那样各自独立
+        # 累加成 ~50% 的隐性重复加权 (问题①)。
+        #   Value 16 · Quality 18 · Growth 18 · Moat 16 · Forward 14 ·
+        #   Cash 10 · Health 8  = 100
+        # Beta 退出加分项 → weight 0：改为对综合分做温和风险调整 (问题②)。
+        # 新增 Moat(护城河) + Forward(前瞻) 两个正交因子 (问题③④)。
         "weights": {
-            # 估值 Valuation (23) — pure price multiples only
-            "pe": 3, "pe_fwd": 8, "ps": 5, "pb": 0, "ev_ebitda": 7,
-            # 盈利质量 Profitability (31) — ROIC + GM = QMJ + Novy-Marx quality axes
-            "eps": 0, "roe": 4, "roic": 15, "gross_margin": 8, "op_margin": 4,
-            # 成长 Growth (27) — the AI thesis; rev + earnings momentum
-            "rev_growth": 15, "eps_growth": 12,
-            # 现金流 Cash flow (9) — owner-earnings reality check vs GPU resale
-            "fcf_yield": 9,
-            # 财务健康 Health (4) — cohort isn't uniformly net-cash (CLS/SMCI/VRT)
-            "de": 3, "interest_cov": 1, "current_ratio": 0,
-            # 风险 Risk (6) — late-cycle high-beta penalty
-            "beta": 6,
+            # 估值 Value (16) — 纯价格倍数
+            "pe": 2, "pe_fwd": 8, "ps": 0, "pb": 0, "ev_ebitda": 6,
+            # 质量 Quality (18) — 资本效率，相关簇封顶在此因子内
+            "eps": 0, "roe": 3, "roic": 12, "op_margin": 3,
+            # 成长 Growth (18) — AI 主线：营收 + 盈利动量
+            "rev_growth": 10, "eps_growth": 8,
+            # 护城河 Moat (16) — 毛利水平 + 毛利稳定性 + 研发强度 = 定价权代理
+            "gross_margin": 7, "gm_stability": 3, "rd_intensity": 6,
+            # 前瞻 Forward (14) — 分析师 EPS 上修动量 + Capex/产能扩张
+            "eps_revision": 8, "capex_growth": 6,
+            # 现金流 Cash flow (10) — owner-earnings，最难造假
+            "fcf_yield": 10,
+            # 财务健康 Health (8)
+            "de": 5, "interest_cov": 3, "current_ratio": 0,
+            # 周期 Cycle (0) — 仅周期股启用
+            "cycle_pos": 0,
+            # 风险 Risk (0) — Beta 不再加分，改作风险调整乘子
+            "beta": 0,
         },
-        "weight_rationale": "成长 × 资本效率 × 现金流：ROIC 15 + 毛利 8 + 营收 15 + 利润 12 共占 50 — 区分真复利与卖 GPU 转售。已删除股东回报维度（权重按比例并入其余维度）；PEG 亦不计分（其本身=PE÷增速，与成长维度重复）。",
+        "weight_rationale": "V2.0 因子正交化：质量(ROIC/ROE/经营利润率)封顶 18 防重复加权；新增 护城河 16(毛利+稳定性+研发) 与 前瞻 14(EPS 上修+Capex) 两个正交维度；Beta 退出加分、改作温和风险调整(见风险调整分)。成长 18 + 现金流 10 仍是 AI 复利核心。",
     },
     "energy": {
         "id": "energy",
@@ -110,26 +120,31 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("公用事业电力",        ["NEE", "DUK", "SO", "AEP", "D", "SRE", "EXC"]),
             ("IPP / 核电",         ["VST", "CEG", "TLN"]),
         ],
-        # Dimensions cleaned (PEG removed — double-counted growth). EV/EBITDA is
-        # THE energy metric (MLP/upstream standard; DD&A makes PE noisy). ROIC
-        # separates disciplined operators (XOM, EOG) from value traps. PE kept
-        # low (the classic "cheap-at-the-top" cyclical trap). Growth deliberately
-        # tiny — production growth at peak is value-destructive.
+        # ── V2.0：成熟现金牛 + 强周期。新增 周期因子(8) 把「峰值利润 ≠ 买点」
+        # 量化成扣分项 (问题③的周期位置调整)。Value 28 · Quality 18 · Growth 6
+        # · Moat 6 · Forward 8 · Cash 14 · Health 12 · Cycle 8 = 100。
+        # Beta → 0 (改作风险调整)；研发强度对能源不显著 → 0。
         "weights": {
-            # 估值 Valuation (33) — EV/EBITDA dominates (debt-adjusted across MLP/E&P/utility)
-            "pe": 3, "pe_fwd": 6, "ps": 2, "pb": 7, "ev_ebitda": 15,
-            # 盈利质量 Profitability (24) — ROIC separates capital-allocation winners
-            "eps": 0, "roe": 6, "roic": 12, "gross_margin": 2, "op_margin": 4,
-            # 成长 Growth (8) — production growth at peak is value-destructive
-            "rev_growth": 4, "eps_growth": 4,
-            # 现金流 Cash flow (16) — the cash that funds the post-2021 return thesis
-            "fcf_yield": 16,
-            # 财务健康 Health (13) — 2014-16 + 2020 taught us capital structure = survival
-            "de": 7, "interest_cov": 4, "current_ratio": 2,
-            # 风险 Risk (6) — moderate; commodity beta is partly already in EV/EBITDA
-            "beta": 6,
+            # 估值 Value (28) — EV/EBITDA 主导 (跨 MLP/E&P/公用事业债务可比)
+            "pe": 3, "pe_fwd": 6, "ps": 2, "pb": 5, "ev_ebitda": 12,
+            # 质量 Quality (18) — ROIC 区分资本配置赢家 (XOM/EOG vs 价值陷阱)
+            "eps": 0, "roe": 4, "roic": 12, "op_margin": 2,
+            # 成长 Growth (6) — 峰值产量增长是价值毁灭，刻意压低
+            "rev_growth": 3, "eps_growth": 3,
+            # 护城河 Moat (6) — 毛利水平 + 稳定性 (能源研发强度不适用 → 0)
+            "gross_margin": 3, "gm_stability": 3, "rd_intensity": 0,
+            # 前瞻 Forward (8) — EPS 上修 + Capex 资本纪律
+            "eps_revision": 5, "capex_growth": 3,
+            # 现金流 Cash flow (14) — 支撑 2021 后回报主线的现金
+            "fcf_yield": 14,
+            # 财务健康 Health (12) — 2014-16/2020 教训：资本结构=生存
+            "de": 7, "interest_cov": 3, "current_ratio": 2,
+            # 周期 Cycle (8) — 当前毛利相对自身 5y 均值越高 = 越接近周期顶 = 越扣分
+            "cycle_pos": 8,
+            # 风险 Risk (0)
+            "beta": 0,
         },
-        "weight_rationale": "现金 × 资本结构：EV/EBITDA 15 + FCF 收益率 16 + ROIC 12 共占 43；财务健康 13 防穿越油价低谷。已删除股东回报维度（权重按比例并入，现金流/FCF 承接了原股息回购的意义）；PEG 不计分。",
+        "weight_rationale": "V2.0 周期股：新增 周期位置因子(8) —— 毛利高出自身历史越多越接近顶部、越扣分，把「峰值利润≠买点」量化。EV/EBITDA 12 + FCF 14 + ROIC 12 是穿越油价低谷的真实信号；财务健康 12 防破产。Beta 退出加分、改作风险调整。",
     },
     "materials": {
         "id": "materials",
@@ -145,26 +160,30 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("矿业巨头",           ["BHP", "RIO", "VALE"]),
             ("工业气体 / 化工",    ["LIN", "APD", "SHW"]),
         ],
-        # Cyclical reflexes baked in: EPS-growth-at-top is a CONTRA-indicator
-        # (cycle-peak EPS is not a buy signal), so growth is kept tiny. EV/EBITDA
-        # is the cyclical comp standard for miners/specialty chems. ROIC separates
-        # LIN/SHW quality compounders from FCX/AA pure cyclicals. PEG removed
-        # (double-counted growth — especially toxic in a peak-cycle cohort).
+        # ── V2.0：最强周期属性 → 周期因子给到 10。Value 30 · Quality 18 ·
+        # Growth 6 · Moat 6 · Forward 6 · Cash 12 · Health 12 · Cycle 10 = 100。
+        # 成长刻意压低（顶部 EPS 是反向指标）；Beta → 0。
         "weights": {
-            # 估值 Valuation (34) — EV/EBITDA + P/B are the cyclical comp standard
-            "pe": 3, "pe_fwd": 4, "ps": 3, "pb": 9, "ev_ebitda": 15,
-            # 盈利质量 Profitability (26) — ROIC separates specialty from commodity
-            "eps": 0, "roe": 7, "roic": 11, "gross_margin": 4, "op_margin": 4,
-            # 成长 Growth (8) — EPS-growth-at-top is a contra-indicator
-            "rev_growth": 4, "eps_growth": 4,
-            # 现金流 Cash flow (13) — through-cycle FCF discipline
-            "fcf_yield": 13,
-            # 财务健康 Health (11) — survive the down-cycle
-            "de": 5, "interest_cov": 4, "current_ratio": 2,
-            # 风险 Risk (8)
-            "beta": 8,
+            # 估值 Value (30) — EV/EBITDA + P/B 是周期可比标准
+            "pe": 3, "pe_fwd": 4, "ps": 3, "pb": 8, "ev_ebitda": 12,
+            # 质量 Quality (18) — ROIC 区分 LIN/SHW 复利者 vs FCX/AA 纯周期
+            "eps": 0, "roe": 5, "roic": 11, "op_margin": 2,
+            # 成长 Growth (6) — 顶部 EPS 增长是反向指标
+            "rev_growth": 3, "eps_growth": 3,
+            # 护城河 Moat (6) — 毛利水平 + 稳定性
+            "gross_margin": 4, "gm_stability": 2, "rd_intensity": 0,
+            # 前瞻 Forward (6) — EPS 上修 + Capex
+            "eps_revision": 4, "capex_growth": 2,
+            # 现金流 Cash flow (12) — 穿越周期的 FCF 纪律
+            "fcf_yield": 12,
+            # 财务健康 Health (12) — 活过下行周期
+            "de": 5, "interest_cov": 4, "current_ratio": 3,
+            # 周期 Cycle (10) — 周期位置调整，本板块给最高权重
+            "cycle_pos": 10,
+            # 风险 Risk (0)
+            "beta": 0,
         },
-        "weight_rationale": "周期股反思：成长仅 8 分（周期顶部 EPS 是反向指标）；EV/EBITDA 15 + P/B 9 + ROIC 11 + FCF 13 才是穿越周期底部的真实信号。已删除股东回报维度（权重按比例并入）；PEG 不计分。",
+        "weight_rationale": "V2.0 最强周期：周期位置因子给到 10（全板块最高）—— 毛利越高出自身 5y 均值越接近顶部、越扣分。EV/EBITDA 12 + P/B 8 + ROIC 11 + FCF 12 是穿越周期底部的真实信号；成长仅 6（顶部 EPS 反向）。Beta 退出加分、改作风险调整。",
     },
     "financial": {
         "id": "financial",
@@ -179,27 +198,30 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("保险 / 多元化",     ["BRK-B"]),
             ("加密 / 互联网券商", ["COIN", "HOOD"]),
         ],
-        # Banks are P/B × ROE (Penman 1996 RIM identity: P/B = (ROE − g)/(COE − g)),
-        # so P/B and ROE are co-anchored at 18 each to encode the identity. PEG
-        # removed (double-counted growth, and growth is a weak bank signal anyway).
-        # EV/EBITDA / FCF-heavy / interest_cov / current_ratio → 0 (category
-        # errors — deposits aren't debt, ops/financing inseparable). Beta high
-        # (2023 SVB lesson: bank-beta-to-credit-cycle is fundamental).
+        # ── V2.0：P/B × ROE 双锚 (Penman 1996 RIM 恒等式)。护城河/周期/Capex 对
+        # 银行是 category error → 0；只保留 前瞻(EPS 上修 8) 作为信用周期前置信号。
+        # Value 34 · Quality 34 · Growth 10 · Forward 8 · Cash 4 · Health 10 = 100。
+        # Beta → 0（信用周期尾部改由风险调整分体现，不再混入基本面分）。
         "weights": {
-            # 估值 Valuation (36) — P/B is THE bank metric
-            "pe": 7, "pe_fwd": 7, "ps": 0, "pb": 22, "ev_ebitda": 0,
-            # 盈利质量 Profitability (32) — ROE × P/B is the Gordon-growth-via-RIM identity
-            "eps": 0, "roe": 22, "roic": 5, "gross_margin": 0, "op_margin": 5,
-            # 成长 Growth (12)
-            "rev_growth": 5, "eps_growth": 7,
-            # 现金流 Cash flow (5) — banks have no real FCF concept; minimal weight
-            "fcf_yield": 5,
-            # 财务健康 Health (6) — most metrics are category errors; only D/E retained
-            "de": 6, "interest_cov": 0, "current_ratio": 0,
-            # 风险 Risk (9) — 2023 SVB blowup: bank-beta-to-credit-cycle is fundamental
-            "beta": 9,
+            # 估值 Value (34) — P/B 是银行核心
+            "pe": 7, "pe_fwd": 7, "ps": 0, "pb": 20, "ev_ebitda": 0,
+            # 质量 Quality (34) — ROE × P/B 即 Gordon-growth-via-RIM 恒等式
+            "eps": 0, "roe": 22, "roic": 5, "op_margin": 7,
+            # 成长 Growth (10)
+            "rev_growth": 4, "eps_growth": 6,
+            # 护城河 Moat (0) — 毛利/研发对银行无意义
+            "gross_margin": 0, "gm_stability": 0, "rd_intensity": 0,
+            # 前瞻 Forward (8) — 分析师 EPS 上修是信用周期前置信号
+            "eps_revision": 8, "capex_growth": 0,
+            # 现金流 Cash flow (4) — 银行无真实 FCF 概念，象征性
+            "fcf_yield": 4,
+            # 财务健康 Health (10) — 多数指标是 category error，仅留 D/E
+            "de": 10, "interest_cov": 0, "current_ratio": 0,
+            "cycle_pos": 0,
+            # 风险 Risk (0)
+            "beta": 0,
         },
-        "weight_rationale": "P/B × ROE 双锚 (Penman RIM 恒等式)：P/B 22 + ROE 22 共占 44 — 银行估值的代数核心；Beta 9 防 2023 SVB 类型尾部。已删除股东回报维度（原占 17，按比例并入 P/B×ROE 双锚）；PEG 不计分。",
+        "weight_rationale": "V2.0 P/B × ROE 双锚 (Penman RIM 恒等式)：P/B 20 + ROE 22 — 银行估值代数核心。护城河/Capex 对银行是 category error 故为 0；新增 前瞻 8(EPS 上修) 作信用周期前置信号。Beta 退出加分、SVB 类尾部改由风险调整分体现。",
     },
     "biotech": {
         "id": "biotech",
@@ -213,27 +235,30 @@ SECTORS: Dict[str, Dict[str, Any]] = {
             ("医疗器械 / 诊断",     ["ABT", "TMO", "DHR", "ISRG", "MDT", "BSX"]),
             ("Biotech / 创新药",   ["REGN", "VRTX", "MRNA", "GILD", "AMGN", "BIIB"]),
         ],
-        # Biotech cohort is BIMODAL — clinical-stage cash-burners vs commercial-
-        # stage cash machines. current_ratio is the binary-survival metric for
-        # clinical-stage names (cash runway). Gross margin (80%+ on branded drugs)
-        # is the commercial moat. P/S carries weight (useful for pre-revenue).
-        # PEG removed (meaningless for pre-revenue + double-counts growth);
-        # its weight moved into P/S, EV/EBITDA and the rev-growth ramp signal.
+        # ── V2.0：双峰 cohort（临床期烧钱 vs 商业化现金机器）。护城河因子(18)对
+        # biotech 最关键 —— 品牌药 80%+ 毛利 + 研发强度就是管线护城河；前瞻(12)用
+        # EPS 上修捕捉管线催化。Value 24 · Quality 14 · Growth 14 · Moat 18 ·
+        # Forward 12 · Cash 6 · Health 12 = 100。Beta → 0。
         "weights": {
-            # 估值 Valuation (29)
-            "pe": 3, "pe_fwd": 5, "ps": 9, "pb": 2, "ev_ebitda": 10,
-            # 盈利质量 Profitability (25) — gross margin is the branded-drug moat
-            "eps": 0, "roe": 4, "roic": 6, "gross_margin": 11, "op_margin": 4,
-            # 成长 Growth (19) — ramp validates clinical→commercial conversion
-            "rev_growth": 12, "eps_growth": 7,
-            # 现金流 Cash flow (8)
-            "fcf_yield": 8,
-            # 财务健康 Health (13) — cash runway is BINARY SURVIVAL for clinical-stage
-            "de": 4, "interest_cov": 1, "current_ratio": 8,
-            # 风险 Risk (6)
-            "beta": 6,
+            # 估值 Value (24)
+            "pe": 3, "pe_fwd": 5, "ps": 8, "pb": 2, "ev_ebitda": 6,
+            # 质量 Quality (14)
+            "eps": 0, "roe": 4, "roic": 6, "op_margin": 4,
+            # 成长 Growth (14) — ramp 验证 临床→商业化 转化
+            "rev_growth": 9, "eps_growth": 5,
+            # 护城河 Moat (18) — 品牌药毛利 + 毛利稳定性 + 研发强度=管线投入
+            "gross_margin": 8, "gm_stability": 4, "rd_intensity": 6,
+            # 前瞻 Forward (12) — EPS 上修捕捉管线/审批催化
+            "eps_revision": 8, "capex_growth": 4,
+            # 现金流 Cash flow (6)
+            "fcf_yield": 6,
+            # 财务健康 Health (12) — 临床期现金跑道是二元生存
+            "de": 3, "interest_cov": 1, "current_ratio": 8,
+            "cycle_pos": 0,
+            # 风险 Risk (0)
+            "beta": 0,
         },
-        "weight_rationale": "双峰 cohort：商业化阶段看毛利 11 + 营收 12 + ROIC 6；临床阶段看现金跑道 (流动比率 8) + 财务健康 13 — 安全权重为各板块最高。已删除股东回报维度（权重按比例并入）；PEG 不计分。",
+        "weight_rationale": "V2.0 双峰 cohort：护城河因子给到 18（全板块最高）—— 品牌药 80%+ 毛利 + 研发强度 6 = 管线护城河代理；前瞻 12(EPS 上修) 捕捉审批/管线催化。临床期看现金跑道(流动比率 8)。Beta 退出加分、改作风险调整。",
     },
     "crypto": {
         "id": "crypto",
@@ -299,21 +324,36 @@ METRICS: Dict[str, Dict[str, Any]] = {
     "ps":            {"label": "P/S",             "direction": "lower",  "pct": False, "group": "valuation"},
     "pb":            {"label": "P/B",             "direction": "lower",  "pct": False, "group": "valuation"},
     "ev_ebitda":     {"label": "EV/EBITDA",       "direction": "lower",  "pct": False, "group": "valuation"},
-    # ── Profitability ────────────────────────
+    # ── Quality (资本效率) — V2.0 把相关簇锁在这一个因子内 ──
     "eps":           {"label": "EPS",             "direction": "higher", "pct": False, "group": "profitability"},
     "roe":           {"label": "ROE",             "direction": "higher", "pct": True,  "group": "profitability"},
     "roic":          {"label": "ROIC",            "direction": "higher", "pct": True,  "group": "profitability"},
-    "gross_margin":  {"label": "毛利率",          "direction": "higher", "pct": True,  "group": "profitability"},
     "op_margin":     {"label": "经营利润率",      "direction": "higher", "pct": True,  "group": "profitability"},
     # ── Growth ───────────────────────────────
     "rev_growth":    {"label": "营收 YoY",        "direction": "higher", "pct": True,  "group": "growth"},
     "eps_growth":    {"label": "利润 YoY",        "direction": "higher", "pct": True,  "group": "growth"},
+    # ── Moat (护城河) — V2.0 新增维度 (问题④) ──
+    #   毛利率从 盈利质量 迁入 护城河：它代表定价权，与 ROIC/ROE 的资本效率
+    #   含义正交。gm_stability=近 5y 毛利标准差 (越低越稳=越有护城河，方向 lower)；
+    #   rd_intensity=研发/营收 (高研发投入=半导体/biotech 的护城河，方向 higher)。
+    "gross_margin":  {"label": "毛利率",          "direction": "higher", "pct": True,  "group": "moat"},
+    "gm_stability":  {"label": "毛利稳定性",      "direction": "lower",  "pct": True,  "group": "moat"},
+    "rd_intensity":  {"label": "研发强度",        "direction": "higher", "pct": True,  "group": "moat"},
+    # ── Forward (前瞻) — V2.0 新增维度 (问题③) ──
+    #   eps_revision=分析师 EPS 上修动量 (近 30d 上调家数−下调家数，方向 higher)；
+    #   capex_growth=资本开支 YoY (Hyperscaler Capex / 产能扩张代理，方向 higher)。
+    "eps_revision":  {"label": "EPS 上修",        "direction": "higher", "pct": False, "group": "forward"},
+    "capex_growth":  {"label": "Capex YoY",       "direction": "higher", "pct": True,  "group": "forward"},
     # ── Cash Flow ────────────────────────────
     "fcf_yield":     {"label": "FCF 收益率",      "direction": "higher", "pct": True,  "group": "cash_flow"},
-    # ── Leverage / Liquidity ─────────────────
+    # ── Leverage / Liquidity (财务健康) ─────────
     "de":            {"label": "D/E",             "direction": "lower",  "pct": False, "group": "leverage"},
     "interest_cov":  {"label": "利息保障",        "direction": "higher", "pct": False, "group": "leverage"},
     "current_ratio": {"label": "流动比率",        "direction": "higher", "pct": False, "group": "leverage"},
+    # ── Cycle (周期位置) — V2.0 新增 (问题③)，仅周期股启用 ──
+    #   cycle_pos=当前毛利 − 自身 5y 均值 (pct 点)。正=利润高于历史常态=接近周期
+    #   顶部=扣分；负=低于常态=潜在底部=加分。方向 lower。负值不强制归零(见 score)。
+    "cycle_pos":     {"label": "周期位置",        "direction": "lower",  "pct": True,  "group": "cycle"},
     # NOTE: the 股东回报 (shareholder) dimension was removed. div_yield /
     # buyback_yield are no longer scored metrics; their per-sector weight was
     # folded proportionally into the remaining dimensions. The raw values are
@@ -334,12 +374,17 @@ CRYPTO_METRICS: Dict[str, Dict[str, Any]] = {
 }
 
 # Metric groups — used to render the expanded-row breakdown.
+# V2.0 顺序即维度展示顺序 (左→右)：估值→质量→成长→护城河→前瞻→现金流→健康→周期。
+# profitability 复用旧 key 但语义收窄为「质量/资本效率」；新增 moat/forward/cycle。
 METRIC_GROUPS = {
-    "valuation":      "估值 · VALUATION",
-    "profitability":  "盈利质量 · PROFITABILITY",
+    "valuation":      "估值 · VALUE",
+    "profitability":  "质量 · QUALITY",
     "growth":         "成长 · GROWTH",
+    "moat":           "护城河 · MOAT",
+    "forward":        "前瞻 · FORWARD",
     "cash_flow":      "现金流 · CASH FLOW",
-    "leverage":       "财务健康 · FINANCIAL HEALTH",
+    "leverage":       "财务健康 · HEALTH",
+    "cycle":          "周期 · CYCLE",
     # Crypto-only groups sit before risk so the crypto dimension order reads
     # 规模 → 流动 → 动量 → 回撤 → 风险. For stocks these groups are absent, so
     # risk stays last there too.
@@ -705,6 +750,101 @@ def _fetch_yfinance_metrics(ticker: str) -> Optional[Dict[str, Any]]:
     }
 
 
+# ──────────────── yfinance DEEP fetch (V2.0 forward + moat) ────────────────
+#
+# V2.0 needs four signals the flat `info` call doesn't carry:
+#   * gm_stability  — 近 5y 毛利率标准差 (护城河稳定性)
+#   * rd_intensity  — 研发/营收 (护城河投入)
+#   * cycle_pos     — 当前毛利 − 自身 5y 均值 (周期位置)
+#   * capex_growth  — 资本开支 YoY (前瞻/产能扩张)
+#   * eps_revision  — 分析师 EPS 上修动量 (前瞻)
+#
+# These come from the (slower) statements + estimates endpoints. The whole
+# thing is BEST-EFFORT: every sub-call is independently guarded and any miss
+# just leaves that metric None, which the scorer redistributes. Disabled
+# entirely when FUND_DEEP=0 so a deployer can shed the extra latency.
+
+def _stmt_row(df, *names):
+    """Pull a row (by any of `names`) from a yfinance statement DataFrame as a
+    list of floats ordered most-recent-first. Returns [] on any problem."""
+    try:
+        if df is None or getattr(df, "empty", True):
+            return []
+        idx = df.index
+        for nm in names:
+            if nm in idx:
+                vals = [_safe_float(x) for x in list(df.loc[nm].values)]
+                return [v for v in vals if v is not None]
+    except Exception:
+        return []
+    return []
+
+
+def _fetch_yfinance_deep(ticker: str) -> Optional[Dict[str, Any]]:
+    """Statements + estimates → V2.0 forward/moat/cycle metrics. Best-effort."""
+    if not _HAS_YF or os.environ.get("FUND_DEEP") == "0":
+        return None
+    try:
+        t = _yf.Ticker(ticker)
+    except Exception:
+        return None
+
+    out: Dict[str, Any] = {}
+
+    # ── Income statement → gross-margin series → moat + cycle ──
+    try:
+        inc = getattr(t, "income_stmt", None)
+        rev = _stmt_row(inc, "Total Revenue", "TotalRevenue", "Revenue")
+        gp = _stmt_row(inc, "Gross Profit", "GrossProfit")
+        rd = _stmt_row(inc, "Research And Development",
+                       "ResearchAndDevelopment", "Research Development")
+        # Align gross-margin series across the years both rows cover.
+        n = min(len(rev), len(gp))
+        gms = [gp[i] / rev[i] * 100 for i in range(n) if rev[i] and rev[i] > 0]
+        if len(gms) >= 3:
+            mean_gm = sum(gms) / len(gms)
+            var = sum((g - mean_gm) ** 2 for g in gms) / len(gms)
+            out["yfd_gm_stability"] = round(var ** 0.5, 2)         # stdev, pct-pts
+            out["yfd_cycle_pos"] = round(gms[0] - mean_gm, 2)      # latest − 5y mean
+        if rev and rd and rev[0] and rev[0] > 0:
+            out["yfd_rd_intensity"] = round(rd[0] / rev[0] * 100, 2)
+    except Exception as e:
+        logger.debug("yf deep income %s: %s", ticker, e)
+
+    # ── Cash-flow statement → capex YoY ──
+    try:
+        cf = getattr(t, "cashflow", None)
+        capex = _stmt_row(cf, "Capital Expenditure", "CapitalExpenditures",
+                          "Capital Expenditures")
+        if len(capex) >= 2:
+            c0, c1 = abs(capex[0]), abs(capex[1])
+            if c1 > 0:
+                out["yfd_capex_growth"] = round((c0 - c1) / c1 * 100, 1)
+    except Exception as e:
+        logger.debug("yf deep cashflow %s: %s", ticker, e)
+
+    # ── Analyst EPS revision momentum (近 30d 上调家数 − 下调家数) ──
+    try:
+        rev_df = getattr(t, "eps_revisions", None)
+        if rev_df is not None and not getattr(rev_df, "empty", True):
+            # Prefer the +1y (next fiscal year) row; fall back to first row.
+            row = None
+            for key in ("+1y", "0y", "+1q", "0q"):
+                if key in rev_df.index:
+                    row = rev_df.loc[key]
+                    break
+            if row is None:
+                row = rev_df.iloc[0]
+            up = _safe_float(row.get("upLast30days")) if hasattr(row, "get") else None
+            down = _safe_float(row.get("downLast30days")) if hasattr(row, "get") else None
+            if up is not None or down is not None:
+                out["yfd_eps_revision"] = (up or 0) - (down or 0)
+    except Exception as e:
+        logger.debug("yf deep revisions %s: %s", ticker, e)
+
+    return out or None
+
+
 # ─────────────────────── CoinGecko (crypto sector) ────────────────────
 
 # Map our shorthand ticker → CoinGecko coin id. CoinGecko's /coins/markets
@@ -804,7 +944,8 @@ def _pick_first(*vals):
 def _normalise_row(ticker: str, ov: Optional[Dict[str, Any]],
                    poly: Optional[Dict[str, Any]] = None,
                    fh: Optional[Dict[str, Any]] = None,
-                   yf: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                   yf: Optional[Dict[str, Any]] = None,
+                   yfd: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Merge AV + Polygon + Finnhub + yfinance → 20-metric row.
 
     Per-metric fallback order (first non-None wins):
@@ -817,6 +958,7 @@ def _normalise_row(ticker: str, ov: Optional[Dict[str, Any]],
     fh = fh or {}
     yf = yf or {}
     poly = poly or {}
+    yfd = yfd or {}
 
     # Track which vendor supplied each metric — exposed in `_sources` for
     # diagnostics (the frontend can surface this if we ever want to).
@@ -944,6 +1086,13 @@ def _normalise_row(ticker: str, ov: Optional[Dict[str, Any]],
                   ("yf", yf.get("yf_beta")),
                   ("av", _safe_float(ov.get("Beta"))))
 
+    # ── Moat / Forward / Cycle (V2.0 deep metrics, all from yfd) ──
+    gm_stability = _layer("gm_stability", ("yfd", yfd.get("yfd_gm_stability")))
+    rd_intensity = _layer("rd_intensity", ("yfd", yfd.get("yfd_rd_intensity")))
+    cycle_pos    = _layer("cycle_pos",    ("yfd", yfd.get("yfd_cycle_pos")))
+    capex_growth = _layer("capex_growth", ("yfd", yfd.get("yfd_capex_growth")))
+    eps_revision = _layer("eps_revision", ("yfd", yfd.get("yfd_eps_revision")))
+
     # Sanity-check: did we get anything at all?
     metric_vals = (pe, pe_fwd, peg_av, peg_fwd, ps, pb, ev_ebitda, eps,
                    roe, roic, gross_margin, op_margin, rev_g, eps_g,
@@ -982,6 +1131,10 @@ def _normalise_row(ticker: str, ov: Optional[Dict[str, Any]],
         "eps": eps, "roe": roe, "roic": roic,
         "gross_margin": gross_margin, "op_margin": op_margin,
         "rev_growth": rev_g, "eps_growth": eps_g,
+        # V2.0 护城河 / 前瞻 / 周期
+        "gm_stability": gm_stability, "rd_intensity": rd_intensity,
+        "eps_revision": eps_revision, "capex_growth": capex_growth,
+        "cycle_pos": cycle_pos,
         "fcf_yield": fcf_yield,
         "de": de, "interest_cov": interest_cov, "current_ratio": current_ratio,
         "div_yield": div_yield, "buyback_yield": buyback_yield,
@@ -1028,17 +1181,21 @@ def _fetch_one(ticker: str, force: bool = False) -> Dict[str, Any]:
     # Four vendors in parallel. yfinance is slower (~1-2s) but pulls the
     # metrics the others miss; running it concurrently keeps total wall
     # time at max(vendor_latency), not sum.
-    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="fund-vendor") as pool:
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="fund-vendor") as pool:
         f_ov   = pool.submit(_fetch_av_overview, ticker)
         f_poly = pool.submit(_fetch_polygon_quote, ticker)
         f_fh   = pool.submit(_fetch_finnhub_metrics, ticker)
         f_yf   = pool.submit(_fetch_yfinance_metrics, ticker)
+        # V2.0 deep statements + estimates (moat/forward/cycle). Best-effort,
+        # runs in parallel so it doesn't add to wall-time beyond max(vendor).
+        f_yfd  = pool.submit(_fetch_yfinance_deep, ticker)
         ov   = f_ov.result()
         poly = f_poly.result()
         fh   = f_fh.result()
         yf   = f_yf.result()
+        yfd  = f_yfd.result()
 
-    row = _normalise_row(ticker, ov, poly, fh, yf)
+    row = _normalise_row(ticker, ov, poly, fh, yf, yfd)
     if row.get("_no_data"):
         _NEG_CACHE[t_up] = now + _NEG_TTL_SEC
         return row
@@ -1145,7 +1302,10 @@ def score_rows(rows: List[Dict[str, Any]],
             s = pct * 100 if cfg["direction"] == "higher" else (1 - pct) * 100
             # Lower-is-better metric with negative or zero value
             # (e.g. negative PE = unprofitable, negative PEG) → score 0.
-            if cfg["direction"] == "lower" and v is not None and v <= 0:
+            # cycle_pos is exempt: there a NEGATIVE value (margins below the
+            # stock's own history = trough) is GOOD, so it must rank normally.
+            if (cfg["direction"] == "lower" and m != "cycle_pos"
+                    and v is not None and v <= 0):
                 s = 0.0
             sub[m] = round(s, 1)
             present_weights[m] = weights.get(m, 0)
@@ -1178,6 +1338,11 @@ def score_rows(rows: List[Dict[str, Any]],
         annotated["dim_scores"] = dim_scores
         annotated["score"] = composite
         annotated["score_class"] = _score_class(composite)
+        # V2.0 (问题②): Beta 不再混入加分项；改在此对综合分做一次温和的
+        # 风险调整，得到副指标 score_riskadj。主排序仍用纯基本面 score。
+        riskadj = _beta_adjust(composite, r.get("beta"))
+        annotated["score_riskadj"] = riskadj
+        annotated["score_riskadj_class"] = _score_class(riskadj)
         out.append(annotated)
     return out
 
@@ -1190,6 +1355,26 @@ def _score_class(s: Optional[float]) -> str:
     if s >= 45:
         return "mid"
     return "high"   # "high" = expensive / weak — keeps CSS vocab (good/mid/high) consistent
+
+
+def _beta_adjust(composite: Optional[float], beta: Optional[float]) -> Optional[float]:
+    """V2.0 risk-adjustment (问题②). Beta leaves the additive score entirely;
+    here it only TILTS the composite as a secondary lens.
+
+    Deliberately GENTLE and bounded — high beta is not purely bad (在牛市里
+    AI 高 Beta 是 alpha 来源), so this is a mild ±tilt, NOT the user's literal
+    "divide by beta" (which would crush the 0-100 scale):
+        beta 1.0 → ×1.00 (neutral)   beta 2.0 → ×0.90 (−10%)
+        beta 0.5 → ×1.05             clamp the multiplier to [0.85, 1.12]
+    """
+    if composite is None:
+        return None
+    if beta is None:
+        return composite          # no beta → no tilt, keep the fundamental score
+    b = max(0.3, min(2.5, beta))
+    mult = 1.0 - 0.10 * (b - 1.0)
+    mult = max(0.85, min(1.12, mult))
+    return round(max(0.0, min(100.0, composite * mult)), 1)
 
 
 def _sector_dimensions(sector: Dict[str, Any],
@@ -1437,16 +1622,21 @@ def build_commentary(sector: Dict[str, Any],
                 bk, bv = max(ds.items(), key=lambda kv: kv[1])
                 short = METRIC_GROUPS.get(bk, bk).split("·")[0].strip()
                 best_str = f"，最强 {short} {bv:.0f}"
+            ra = r.get("score_riskadj")
+            ra_str = f" · 风险调整 {_format_score(ra)}" if ra is not None else ""
             items.append(
-                f"<strong>{r['ticker']}</strong>（综合分 {_format_score(r.get('score'))}{best_str}）"
+                f"<strong>{r['ticker']}</strong>（综合分 {_format_score(r.get('score'))}"
+                f"{ra_str}{best_str}）"
             )
         paragraphs.append({
             "title": "关注度优先级",
             "body": (
                 f"按综合分排序，本期最值得重点观察：{'、'.join(items)}。"
-                f"<em>提示</em>：综合分是板块内百分位加权的<strong>相对强弱</strong>，"
-                f"不等于绝对买入信号 — 必须结合业绩可持续性、行业景气节奏、个股催化做二次筛选。"
-                f"下方表格支持按综合分或<strong>任意维度分</strong>排序 + 子板块过滤。"
+                f"<em>V2.0 方法</em>：综合分用 <strong>Barra 风格因子正交化</strong>"
+                f"（估值/质量/成长/护城河/前瞻/现金流/健康）—— 高度相关的盈利指标被锁在"
+                f"质量因子内，不再重复加权；Beta 退出加分项、改作 <strong>风险调整分</strong>"
+                f"（高 Beta 温和扣分，主排序仍看纯基本面）。综合分是板块内<strong>相对强弱</strong>，"
+                f"非绝对买入信号 — 仍需结合业绩可持续性与个股催化。表格支持按综合分或<strong>任意维度分</strong>排序。"
             ),
         })
     else:

@@ -20,18 +20,22 @@
   const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.API_BASE_URL) || "";
 
   // Metric order in pick-card breakdown bars — the "core 6" for stocks
-  // (the headline fundamentals investors check first).
-  const PICK_METRICS_STOCK = ["pe", "pe_fwd", "peg_fwd", "rev_growth", "eps_growth", "roe"];
+  // (V2.0: headline fundamentals with reliable coverage; the new forward/moat
+  // signals render in the expanded breakdown instead).
+  const PICK_METRICS_STOCK = ["pe_fwd", "rev_growth", "eps_growth", "gross_margin", "roic", "fcf_yield"];
   const PICK_METRICS_CRYPTO = ["market_cap", "vol_to_mcap", "mom_7d", "mom_30d", "ath_dist", "volatility"];
 
   // For "lower-is-better" vs "higher-is-better" arrow in expanded row.
+  // V2.0: gm_stability (毛利波动越小越好) + cycle_pos (越接近周期顶越差) are lower-better.
   const LOWER_BETTER_METRICS = new Set([
     "pe", "pe_fwd", "peg_av", "peg_fwd", "ps", "pb", "ev_ebitda",
-    "de", "beta", "volatility",
+    "de", "beta", "volatility", "gm_stability", "cycle_pos",
   ]);
   const PCT_METRICS = new Set([
     "rev_growth", "eps_growth", "roe", "roic", "gross_margin", "op_margin",
     "fcf_yield", "div_yield", "buyback_yield",
+    // V2.0 新增维度（eps_revision 是家数差，不是百分比，故不在此集）
+    "gm_stability", "rd_intensity", "capex_growth", "cycle_pos",
     "mom_7d", "mom_30d", "ath_dist", "volatility", "vol_to_mcap",
   ]);
 
@@ -986,6 +990,36 @@
     ));
     summary.appendChild(scoreBlock);
 
+    // V2.0 risk-adjusted lens — Beta left the additive composite (问题②); show
+    // it here as a secondary, beta-tilted score so high-beta names are flagged
+    // without distorting the fundamental ranking.
+    if (isNum(row.score_riskadj)) {
+      const raCls = classOf(row.score_riskadj);
+      const delta = isNum(row.score) ? row.score_riskadj - row.score : 0;
+      const deltaStr = isNum(row.score)
+        ? (delta >= 0 ? "+" : "") + delta.toFixed(1) : "";
+      const ra = el("div", {
+        class: "fund2-bk-sum-riskadj",
+        style: "display:flex;align-items:center;gap:8px;margin-top:8px;"
+             + "padding-top:8px;border-top:1px dashed var(--border);font-size:12px;flex-wrap:wrap;",
+      });
+      ra.appendChild(el("span", { class: "muted" }, "风险调整分"));
+      ra.appendChild(el("span", {
+        class: "fund2-c-" + raCls,
+        style: "font-weight:700;font-size:16px;",
+      }, fmtScore(row.score_riskadj)));
+      if (deltaStr) ra.appendChild(el("span", {
+        class: delta >= 0 ? "fund2-chg-pos" : "fund2-chg-neg",
+        style: "font-size:11px;",
+      }, deltaStr));
+      ra.appendChild(el("span", {
+        class: "muted", style: "font-size:11px;",
+      }, isNum(row.beta)
+          ? "β " + fmt2(row.beta) + " · Beta 已退出加分，仅作温和风险调整"
+          : "无 Beta 数据，未调整"));
+      summary.appendChild(ra);
+    }
+
     if (strongest && weakest) {
       const verdict = el("div", { class: "fund2-bk-sum-verdict" });
       verdict.appendChild(el("span", { class: "fund2-bk-verdict-tag fund2-bk-verdict--up" },
@@ -1237,24 +1271,26 @@
         { key: "analyst_target", label: "ATH",   fmt: v => isNum(v) ? "$" + v.toFixed(2) : "—" },
       ];
     }
-    // Trailing raw-input columns. PEG (AV) removed — PEG is no longer a scored
-    // metric (it double-counted growth into valuation); PEG (Fwd) is kept as a
-    // display-only reference column.
+    // V2.0 trailing columns — surface the headline raw inputs plus two new
+    // signals: EPS 上修 (前瞻) and 风险调整分 (Beta tilt). PEG dropped entirely
+    // (no longer scored — it double-counted growth into valuation).
     return [
-      { key: "pe",          label: "PE",         fmt: fmt1 },
-      { key: "pe_fwd",      label: "Fwd PE",     fmt: fmt1 },
-      { key: "peg_fwd",     label: "PEG (Fwd)",  fmt: fmt2 },
-      { key: "rev_growth",  label: "营收 YoY",   fmt: fmtPct, pct: true },
-      { key: "eps_growth",  label: "利润 YoY",   fmt: fmtPct, pct: true },
-      { key: "market_cap",  label: "市值",       fmt: fmtNum },
+      { key: "pe_fwd",       label: "Fwd PE",   fmt: fmt1 },
+      { key: "gross_margin", label: "毛利率",   fmt: fmtPct, pct: true },
+      { key: "rev_growth",   label: "营收 YoY", fmt: fmtPct, pct: true },
+      { key: "eps_growth",   label: "利润 YoY", fmt: fmtPct, pct: true },
+      { key: "eps_revision", label: "EPS 上修", fmt: v => isNum(v) ? (v > 0 ? "+" : "") + fmt1(v) : "—" },
+      { key: "score_riskadj", label: "风险调整", fmt: fmtScore },
+      { key: "market_cap",   label: "市值",     fmt: fmtNum },
     ];
   }
 
   // Per-sector dimension (group) columns — sortable. Sort key is "dim:<group>";
   // applyTable reads the score from row.dim_scores[group].
   const DIM_SHORT = {
-    valuation: "估值", profitability: "盈利", growth: "成长", cash_flow: "现金",
-    leverage: "健康", shareholder: "股东", risk: "风险",
+    valuation: "估值", profitability: "质量", growth: "成长",
+    moat: "护城", forward: "前瞻", cash_flow: "现金",
+    leverage: "健康", cycle: "周期", shareholder: "股东", risk: "风险",
     scale: "规模", liquidity: "流动", momentum: "动量", drawdown: "回撤",
   };
   function dimColumnsFor(payload) {
@@ -1301,13 +1337,15 @@
   }
 
   const NUM_KEYS = new Set([
-    "score", "rank", "price",
-    // 20-metric stock framework
+    "score", "score_riskadj", "rank", "price",
+    // stock framework
     "pe", "pe_fwd", "peg_av", "peg_fwd", "ps", "pb", "ev_ebitda",
     "eps", "roe", "roic", "gross_margin", "op_margin",
     "rev_growth", "eps_growth", "fcf_yield",
     "de", "interest_cov", "current_ratio",
     "div_yield", "buyback_yield", "beta",
+    // V2.0 护城河 / 前瞻 / 周期
+    "gm_stability", "rd_intensity", "eps_revision", "capex_growth", "cycle_pos",
     "market_cap", "analyst_target",
     // Crypto metrics
     "vol_to_mcap", "mom_7d", "mom_30d", "ath_dist", "volatility",
