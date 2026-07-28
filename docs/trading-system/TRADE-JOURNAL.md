@@ -2,6 +2,7 @@
 
 > 配套 [SPEC.md](SPEC.md) §9。日志是校准闭环的数据底座——**没有日志，p 的估计永远是自我感觉**。
 > V1 阶段用一个 Markdown 表格（或 Google Sheet / CSV）维护即可，字段不许增删。
+> skill 载体（v1.1 起）的台账文件固定在仓库 `docs/trading-system/journal/`：`trades.md`（本模板的实例，含 WAIT 登记表）与 `cards.md`（决策卡归档）；Desktop 载体维持项目知识里的 cards.md。
 
 ## 1. 日志表结构
 
