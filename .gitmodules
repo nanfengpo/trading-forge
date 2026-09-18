@@ -1,0 +1,6 @@
+[submodule "btc_dma"]
+	path = btc_dma
+	url = https://github.com/nanfengpo/btc_dma.git
+[submodule "trade_crypto"]
+	path = trade_crypto
+	url = https://github.com/nanfengpo/trade_crypto.git
